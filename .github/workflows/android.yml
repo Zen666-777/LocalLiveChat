@@ -35,6 +35,9 @@ jobs:
         working-directory: LocalLiveChat
         run: |
           chmod +x gradlew
+          sed -i 's/2026.08.00/2025.05.01/' app/build.gradle.kts
+sed -i 's/androidx.activity:activity-compose:1.12.4/androidx.activity:activity-compose:1.10.1/' app/build.gradle.kts
+sed -i 's/androidx.lifecycle:lifecycle-runtime-ktx:2.11.0/androidx.lifecycle:lifecycle-runtime-ktx:2.9.2/' app/build.gradle.kts
           ./gradlew assembleDebug
 
       - uses: actions/upload-artifact@v4
