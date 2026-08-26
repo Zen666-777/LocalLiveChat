@@ -1,0 +1,43 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract project
+        run: unzip -q LocalLiveChat-MVP-0.3.0.zip
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: LocalLiveChat/**/*.gradle*
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android tools
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+
+      - name: Build APK
+        working-directory: LocalLiveChat
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MEL-Studio-APK
+          path: LocalLiveChat/app/build/outputs/apk/debug/app-debug.apk
