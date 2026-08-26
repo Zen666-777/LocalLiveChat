@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Extract project
-        run: unzip -q LocalLiveChat-MVP-0.3.0.zip
+        run: unzip -q LocalLiveChat-MVP-0.3.2.zip
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -39,36 +39,10 @@ jobs:
         working-directory: LocalLiveChat
         run: |
           chmod +x gradlew
-          sed -i 's/2026.08.00/2025.05.01/' app/build.gradle.kts
-          sed -i 's/androidx.activity:activity-compose:1.12.4/androidx.activity:activity-compose:1.10.1/' app/build.gradle.kts
-          sed -i 's/androidx.lifecycle:lifecycle-runtime-ktx:2.11.0/androidx.lifecycle:lifecycle-runtime-ktx:2.9.2/' app/build.gradle.kts
-          sed -i 's/versionCode = 5/versionCode = 6/' app/build.gradle.kts
-          sed -i 's/versionName = "0.3.0"/versionName = "0.3.1"/' app/build.gradle.kts
-          python3 -c 'from pathlib import Path; p = Path("app/build.gradle.kts"); s = p.read_text(); old = "    buildFeatures {\n        compose = true\n        buildConfig = true\n    }\n"; new = old + "\n    compileOptions {\n        sourceCompatibility = JavaVersion.VERSION_17\n        targetCompatibility = JavaVersion.VERSION_17\n    }\n"; p.write_text(s.replace(old, new, 1))'
-          sed -i 's/$age歳/${age}歳/' app/src/main/java/jp/local/livechat/model/ChatModels.kt
-          sed -i '/import androidx.compose.foundation.layout.weight/d' app/src/main/java/jp/local/livechat/ui/ChatApp.kt
-          sed -i '/import androidx.compose.foundation.layout.weight/d' app/src/main/java/jp/local/livechat/ui/StudioApp.kt
           ./gradlew assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MEL-Studio-APK
-          path: LocalLiveChat/app/build/outputs/apk/debug/app-debug.apk
-      - name: Build APK
-        working-directory: LocalLiveChat
-        run: |
-          chmod +x gradlew
-          sed -i 's/2026.08.00/2025.05.01/' app/build.gradle.kts
-          sed -i 's/androidx.activity:activity-compose:1.12.4/androidx.activity:activity-compose:1.10.1/' app/build.gradle.kts
-          sed -i 's/androidx.lifecycle:lifecycle-runtime-ktx:2.11.0/androidx.lifecycle:lifecycle-runtime-ktx:2.9.2/' app/build.gradle.kts
-          sed -i 's/versionCode = 5/versionCode = 6/' app/build.gradle.kts
-          sed -i 's/versionName = "0.3.0"/versionName = "0.3.1"/' app/build.gradle.kts
-          python3 -c 'from pathlib import Path; p = Path("app/build.gradle.kts"); s = p.read_text(); old = "    buildFeatures {\n        compose = true\n        buildConfig = true\n    }\n"; new = old + "\n    compileOptions {\n        sourceCompatibility = JavaVersion.VERSION_17\n        targetCompatibility = JavaVersion.VERSION_17\n    }\n"; p.write_text(s.replace(old, new, 1))'
-          ./gradlew assembleDebug
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: MEL-Studio-APK
+          name: MEL-Studio-v0.3.2-APK
           path: LocalLiveChat/app/build/outputs/apk/debug/app-debug.apk
