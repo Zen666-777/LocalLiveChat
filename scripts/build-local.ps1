@@ -7,5 +7,6 @@ $env:GRADLE_USER_HOME = Join-Path $taskTools 'gradle-home'
 Set-Location $taskRoot
 # Java 17 reads @argfiles using the Windows ANSI code page. Match Gradle's
 # writer to it so worker classpaths containing Japanese characters survive.
-& .\gradlew.bat --no-daemon '-Dorg.gradle.jvmargs=-Xmx3g -Dfile.encoding=MS932' testDebugUnitTest lintDebug assembleDebug @args
+$taskTestRun = [Guid]::NewGuid().ToString('N')
+& .\gradlew.bat --no-daemon '-Dorg.gradle.jvmargs=-Xmx3g -Dfile.encoding=MS932' "-PmelLocalTestRun=$taskTestRun" testDebugUnitTest lintDebug assembleDebug @args
 exit $LASTEXITCODE

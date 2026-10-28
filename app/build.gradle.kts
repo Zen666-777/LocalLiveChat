@@ -25,6 +25,14 @@ android {
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }
+// OneDrive can turn an old binary-results directory into a read-only reparse
+// point. Local builds use a fresh path; CI keeps Gradle's standard output.
+val localTestRun = providers.gradleProperty("melLocalTestRun")
+if (localTestRun.isPresent) {
+    tasks.withType<Test>().configureEach {
+        binaryResultsDirectory.set(layout.buildDirectory.dir("test-binary-local/${localTestRun.get()}/$name"))
+    }
+}
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.05.01"))
     implementation("androidx.activity:activity-compose:1.10.1")

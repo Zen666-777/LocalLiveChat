@@ -59,7 +59,7 @@ JDK 17、Android SDK platform 36 / build-tools 35.0.0。
 ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
 ```
 
-Windowsでは`gradlew.bat`を使用します。この作業環境向けには`.tools`内のJDK/SDKを使う`./scripts/build-local.ps1`もあります。`.tools`はGit管理しません。初回の取得用`setup-local.ps1`はAndroid SDKライセンスを承諾します。
+Windowsでは`gradlew.bat`を使用します。この作業環境の日本語パス・OneDriveでの再ビルドには、文字コードとテスト出力先を調整する`./scripts/build-local.ps1`を使ってください。`.tools`内のJDK/SDKを使用し、`.tools`はGit管理しません。初回の取得用`setup-local.ps1`はAndroid SDKライセンスを承諾します。
 
 APK: `app/build/outputs/apk/debug/app-debug.apk`。テスト: `app/build/reports/tests/testDebugUnitTest/index.html`。Lint: `app/build/reports/lint-results-debug.html`。
 
