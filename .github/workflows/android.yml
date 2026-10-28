@@ -48,8 +48,16 @@ jobs:
             exit 1
           fi
           umask 077
-          mkdir -p ~/.android
-          printf '%s' "$MEL_DEBUG_KEYSTORE_BASE64" | base64 --decode > ~/.android/debug.keystore
+          key_store_path="$RUNNER_TEMP/mel-chat-debug.keystore"
+          printf '%s' "$MEL_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$key_store_path"
+          restored=$(keytool -exportcert -keystore "$key_store_path" -storepass android -alias androiddebugkey | sha256sum | cut -d ' ' -f 1)
+          expected=$(tr -d '[:space:]' < config/signing-certificate.sha256)
+          if [ "$restored" != "$expected" ]; then
+            echo '::error::Stored signing key does not match the expected certificate.'
+            exit 1
+          fi
+          echo "MEL_SIGNING_KEYSTORE_FILE=$key_store_path" >> "$GITHUB_ENV"
+          echo "Restored fixed signing certificate SHA-256: $restored"
 
       - name: Test, lint and build installable APK
         run: |
@@ -62,6 +70,7 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk > "$RUNNER_TEMP/mel-certificate.txt"
           actual=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/mel-certificate.txt" | tr '[:upper:]' '[:lower:]')
           expected=$(tr -d '[:space:]' < config/signing-certificate.sha256)
+          echo "APK signing certificate SHA-256: $actual"
           if [ "$actual" != "$expected" ]; then
             echo '::error::APK signing certificate changed. Refusing to publish an incompatible update.'
             exit 1

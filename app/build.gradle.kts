@@ -4,6 +4,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
 }
+providers.gradleProperty("melLocalBuildDirectory").orNull?.let {
+    layout.buildDirectory.set(file(it))
+}
 android {
     namespace = "jp.mel.chat"
     compileSdk = 36
@@ -16,6 +19,15 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }
+    val fixedKeystore = providers.environmentVariable("MEL_SIGNING_KEYSTORE_FILE")
+    if (fixedKeystore.isPresent) {
+        signingConfigs.getByName("debug") {
+            storeFile = file(fixedKeystore.get())
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
