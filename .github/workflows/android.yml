@@ -3,7 +3,7 @@ name: MEL Chat APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, 'codex/mel-chat-mvp']
     paths: ['app/**', 'gradle/**', '*.gradle.kts', 'gradle.properties', 'gradlew', '.github/workflows/android.yml']
   pull_request:
     paths: ['app/**', 'gradle/**', '*.gradle.kts', 'gradle.properties', 'gradlew', '.github/workflows/android.yml']

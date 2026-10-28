@@ -4,7 +4,7 @@
 
 ## Galaxyから使う
 
-1. GitHubでこのリポジトリの **Actions → MEL Chat APK → Run workflow** を開く。
+1. GitHubでこのリポジトリの **Actions → MEL Chat APK → Run workflow** を開く。開発版はブランチに`codex/mel-chat-mvp`を選ぶ。
 2. 成功した実行の **Artifacts → MEL-Chat-APK** をダウンロードし、Galaxyの「マイファイル」でZIPを展開する。
 3. `MEL-Chat.apk` を開く。必要な場合、そのファイルを開いたアプリに「不明なアプリのインストール」を許可する。
 4. MEL Chatの右上の設定でOpenRouter APIキー（`sk-or-…`）を登録する。キーはGitHubへ登録しない。
