@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.MelChat" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">#0D0D16</item>
+        <item name="android:colorAccent">#C2A4FF</item>
+    </style>
+</resources>

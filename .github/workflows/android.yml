@@ -1,10 +1,12 @@
-name: Build Android APK
+name: MEL Chat APK
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
+    paths: ['app/**', 'gradle/**', '*.gradle.kts', 'gradle.properties', 'gradlew', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['app/**', 'gradle/**', '*.gradle.kts', 'gradle.properties', 'gradlew', '.github/workflows/android.yml']
 
 permissions:
   contents: read
@@ -12,37 +14,61 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Extract project
-        run: unzip -oq LocalLiveChat-MVP-0.7.0.zip
 
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
-          cache-dependency-path: LocalLiveChat/**/*.gradle*
 
       - name: Set up Android
         uses: android-actions/setup-android@v3
 
       - name: Install Android tools
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
 
-      - name: Build APK
-        working-directory: LocalLiveChat
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Restore personal APK signing key
+        if: github.event_name != 'pull_request'
+        env:
+          MEL_DEBUG_KEYSTORE_BASE64: ${{ secrets.MEL_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$MEL_DEBUG_KEYSTORE_BASE64" ]; then
+            mkdir -p ~/.android
+            printf '%s' "$MEL_DEBUG_KEYSTORE_BASE64" | base64 --decode > ~/.android/debug.keystore
+          fi
+
+      - name: Test, lint and build installable APK
         run: |
           chmod +x gradlew
-          ./gradlew testDebugUnitTest assembleDebug
+          ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
+
+      - name: Name APK and checksum
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/MEL-Chat.apk
+          cd dist
+          sha256sum MEL-Chat.apk > SHA256SUMS.txt
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MEL-Studio-v0.7.0-APK
-          path: LocalLiveChat/app/build/outputs/apk/debug/app-debug.apk
+          name: MEL-Chat-APK
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: MEL-Chat-test-reports
+          path: |
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore

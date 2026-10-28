@@ -1,0 +1,14 @@
+.tools/
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.jks
+*.keystore
+*.log
+.idea/
+dist/
+MEL-Studio-v*-APK/
+MEL-Studio-v*-APK.zip
+_recovery_v040/
+_job_*_logs.zip
