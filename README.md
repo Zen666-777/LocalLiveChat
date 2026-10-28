@@ -35,21 +35,13 @@ GitHubにコードを反映した後は、PCやAndroid StudioなしでAPKを作�
 
 ## 更新インストールの署名
 
-Actionsはインストール可能な**デバッグ署名済みAPK**を生成します。初回はSecretsなしでビルドできます。ただし、GitHubの実行環境が生成するデバッグ署名鍵は実行ごとに変わるため、継続使用前に固定してください。
+このリポジトリは**署名鍵の固定を設定済み**です。通常の利用では署名鍵の手動生成・登録は必要ありません。ActionsはGitHubのRepository secret `MEL_DEBUG_KEYSTORE_BASE64` に保存した専用鍵から、インストール可能なデバッグ署名済みAPKを生成します。
 
-同じAPKを更新インストールし、Roomの履歴を残すには、次の手順で同じ鍵を使います。
+APKの署名証明書を`config/signing-certificate.sha256`と照合し、鍵が消えたり別の鍵に変わった場合は公開前にビルドを停止します。更新時は同じアプリを上書きインストールすることで、Roomの履歴を保持できます。PRで生成するテスト用APKは別名のアーティファクトに分けています。
 
-1. GitHub Codespacesなど、ブラウザーから使えるJDK入りターミナルで以下を一度だけ実行する。
+このSecretは**署名鍵**用です。OpenRouter APIキーとは別です。署名鍵は作り直さずに継続使用してください。秘密鍵のバックアップはGit管理対象外の`.tools/signing/mel-chat-debug.keystore`に保存しています。秘密鍵そのものをソースコードや公開アーティファクトへ追加しないでください。
 
-```sh
-keytool -genkeypair -keystore mel-debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=MEL Chat Personal,O=Personal,C=JP"
-base64 -w 0 mel-debug.keystore
-```
-
-2. 出力されたBase64文字列を、リポジトリの **Settings → Secrets and variables → Actions → New repository secret** に `MEL_DEBUG_KEYSTORE_BASE64` という名前で保存する。
-3. 以後のActionsはその鍵を使用する。元の鍵も安全に保管する。
-
-このSecretは**署名鍵**用です。OpenRouter APIキーとは別です。鍵の設定前に別の署名のAPKを入れた場合、そのAPKへ上書きできないため、実際の会話を蓄積する前に署名を固定してください。個人利用向けのデバッグビルドで、Playストア公開向けのリリース設定は含みません。
+個人利用向けのデバッグビルドで、Playストア公開向けのリリース設定は含みません。管理用の`scripts/configure-signing.py`は既存のGit認証を使用し、鍵をGitHubの公開鍵で暗号化してから登録します。登録済みのSecretは上書きしません。
 
 ## 開発と検証
 
