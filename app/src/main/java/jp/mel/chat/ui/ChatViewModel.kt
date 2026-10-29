@@ -1,6 +1,7 @@
 package jp.mel.chat.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import jp.mel.chat.MelApplication
@@ -8,6 +9,8 @@ import jp.mel.chat.data.*
 import jp.mel.chat.network.RemoteModel
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -25,7 +28,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val models = MutableStateFlow<List<RemoteModel>>(emptyList())
     val notice = MutableStateFlow<String?>(null)
     val hasKey = MutableStateFlow(false)
+    val offline = app.backend.offline
+    val deviceModels = app.deviceModels.state
     private var work: Job? = null
+    private val operations = Mutex()
 
     init {
         viewModelScope.launch {
@@ -44,6 +50,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             try { hasKey.value = app.keys.load() != null }
             catch (e: Exception) { notice.value = e.message }
         }
+        viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                if (!busy.value) {
+                    try { operations.withLock { if (!busy.value) app.deviceModels.pollDownload() } }
+                    catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { notice.value = "モデルの取得状況を確認できません。設定から再試行してください。" }
+                }
+                delay(1500)
+            }
+        }
     }
 
     fun select(id: String?) {
@@ -55,14 +71,35 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (busy.value) return
         busy.value = true
         work = viewModelScope.launch {
-            try { withContext(Dispatchers.IO) { action() } }
-            catch (e: CancellationException) { notice.value = "通信を停止しました。履歴から再試行できます。"; throw e }
+            try { withContext(Dispatchers.IO) { operations.withLock { action() } } }
+            catch (e: CancellationException) { notice.value = "処理を停止しました。保存済みのメッセージは再試行できます。"; throw e }
             catch (e: Exception) { notice.value = e.message ?: "処理に失敗しました。再試行してください。" }
             finally { busy.value = false }
         }
     }
 
-    private fun requireKey(): String = app.keys.load() ?: error("設定でOpenRouter APIキーを登録してください。")
+    private fun requireKey(): String {
+        if (offline.value) {
+            check(app.deviceModels.active() != null) { "設定からローカルモデルを取得・選択してください。" }
+            return ""
+        }
+        return app.keys.load() ?: error("設定でOpenRouter APIキーを登録してください。")
+    }
+    fun setOffline(value: Boolean) = perform {
+        app.device.release()
+        app.backend.setOffline(value)
+        models.value = emptyList()
+    }
+    fun downloadModel() = perform { app.deviceModels.download() }
+    fun cancelModelDownload() = perform { app.deviceModels.cancelDownload() }
+    fun importModel(uri: Uri) = perform {
+        app.device.release()
+        app.deviceModels.import(uri)
+        notice.value = "モデルを保存しました。端末内で会話・要約できます。"
+    }
+    fun selectModel(id: String) = perform { app.device.release(); app.deviceModels.select(id) }
+    fun deleteModel(id: String) = perform { app.device.release(); app.deviceModels.delete(id) }
+    fun releaseModel() = perform { app.device.release(); notice.value = "モデルのメモリを解放しました。次の会話で読み込みます。" }
     fun send(id: String, text: String?, onAccepted: () -> Unit = {}) {
         if (busy.value) return
         perform {
@@ -86,7 +123,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun summarize(id: String) = perform {
         repository.summarize(id, requireKey())
-        notice.value = "記憶を更新しました。直近8件は会話の文脈として保持します。"
+        notice.value = "記憶を更新しました。直近の会話と元の履歴も保持しています。"
     }
     fun saveKey(value: String, done: () -> Unit) = perform {
         app.keys.save(value)
@@ -96,7 +133,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun clearKey() = perform { app.keys.clear(); hasKey.value = false; notice.value = "APIキーを削除しました。" }
     fun refreshModels() {
-        if (loadingModels.value) return
+        if (offline.value || loadingModels.value) return
         loadingModels.value = true
         viewModelScope.launch {
             try { models.value = app.api.models() }

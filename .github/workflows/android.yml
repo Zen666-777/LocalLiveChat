@@ -12,9 +12,24 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  native-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile the actual local inference engine
+        run: |
+          cmake -S app/src/main/cpp -B /tmp/mel-native -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/mel-native --target mel-smoke -j 2
+      - name: Verify and run the recommended GGUF with no API key
+        run: |
+          curl --fail --location --retry 3 --output /tmp/mel-model.gguf 'https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/18727206c51467496bfba014368bd0a30e97f411/Qwen3-4B-Instruct-2507-Q4_K_M.gguf'
+          echo '3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597  /tmp/mel-model.gguf' | sha256sum --check
+          /tmp/mel-native/mel-smoke /tmp/mel-model.gguf
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -34,7 +49,7 @@ jobs:
           log-accepted-android-sdk-licenses: false
 
       - name: Install Android tools
-        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
 
       - uses: gradle/actions/setup-gradle@v4
 

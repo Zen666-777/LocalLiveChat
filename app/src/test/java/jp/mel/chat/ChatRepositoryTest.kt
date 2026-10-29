@@ -102,7 +102,33 @@ class ChatRepositoryTest {
             assertEquals("メル", second.chatDao().character("a")!!.name)
         } finally { second.close(); context.deleteDatabase(name) }
     }
+    @Test fun localContextCompactsMoreThanEightRecentTurnsWithoutDroppingHistory() = runBlocking {
+        fake.localMode = true
+        repository.save(a)
+        repeat(10) { index -> repository.dao.insertMessage(MessageEntity(characterId = "a", role = if (index % 2 == 0) "user" else "assistant", content = "x".repeat(500))) }
+        repository.send("a", "latest", "")
+        assertNotNull(repository.dao.memory("a"))
+        assertEquals(13, repository.dao.messages("a").size)
+        assertEquals("local/test", repository.dao.messages("a").last().model)
+        assertTrue(fake.lastTurns.first().content.contains("メル"))
+        assertTrue(fake.lastTurns.any { it.content.contains("キャラクターとして") })
+    }
+    @Test fun oversizedLocalMessageRemainsSavedAndDoesNotInventAReply() = runBlocking {
+        fake.localMode = true
+        repository.save(a)
+        assertTrue(runCatching { repository.send("a", "x".repeat(5000), "") }.isFailure)
+        assertEquals(2, repository.dao.messages("a").size)
+        assertEquals("user", repository.dao.messages("a").last().role)
+        assertNull(repository.dao.memory("a"))
+    }
     private class FakeService : ChatService {
+        var localMode = false
+        override val local get() = localMode
+        override val contextLimit get() = if (local) 4096 else null
+        override val outputLimit get() = if (local) 512 else 1024
+        override val summaryLimit get() = if (local) 512 else 768
+        override fun responseModel(requested: String) = if (local) "local/test" else requested
+        override suspend fun tokenCount(messages: List<Turn>): Int = if (local) 400 + messages.sumOf { it.content.length } else ConversationPolicy.cost(messages)
         var fail = false
         var failSummary = false
         var lastModel = ""

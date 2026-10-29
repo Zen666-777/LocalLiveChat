@@ -15,6 +15,12 @@ data class Turn(val role: String, val content: String)
 data class RemoteModel(val id: String, val name: String, val contextTokens: Int, val promptPrice: String, val completionPrice: String)
 
 interface ChatService {
+    val local: Boolean get() = false
+    val contextLimit: Int? get() = null
+    val outputLimit: Int get() = 1024
+    val summaryLimit: Int get() = 768
+    fun responseModel(requested: String): String = requested
+    suspend fun tokenCount(messages: List<Turn>): Int = jp.mel.chat.data.ConversationPolicy.cost(messages)
     suspend fun complete(key: String, model: String, messages: List<Turn>, temperature: Float, maxTokens: Int): String
     suspend fun models(): List<RemoteModel>
 }

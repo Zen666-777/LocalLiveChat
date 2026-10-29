@@ -10,14 +10,18 @@ providers.gradleProperty("melLocalBuildDirectory").orNull?.let {
 android {
     namespace = "jp.mel.chat"
     compileSdk = 36
+    ndkVersion = "27.2.12479018"
     defaultConfig {
         applicationId = "jp.mel.chat"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0-mvp"
+        versionCode = 2
+        versionName = "1.1.0-local-rp"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        ndk { abiFilters += "arm64-v8a" }
+        externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_shared", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON") } }
     }
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     buildFeatures { compose = true }
     val fixedKeystore = providers.environmentVariable("MEL_SIGNING_KEYSTORE_FILE")
     if (fixedKeystore.isPresent) {

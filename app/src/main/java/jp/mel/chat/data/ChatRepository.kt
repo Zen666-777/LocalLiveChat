@@ -52,13 +52,13 @@ class ChatRepository(private val database: ChatDatabase, private val service: Ch
         onPersisted()
 
         compact(character, key, force = false)
-        val turns = ConversationPolicy.prompt(character, dao.memory(id), dao.messages(id))
-        require(ConversationPolicy.cost(turns) <= ConversationPolicy.inputBudget(character)) {
+        val turns = prompt(character, dao.memory(id), dao.messages(id))
+        require(service.tokenCount(turns) <= inputBudget(character)) {
             "直近の会話がコンテキスト上限を超えています。より大きい上限のモデルを選んで再試行してください。"
         }
-        val response = service.complete(key, character.model, turns, character.temperature, ConversationPolicy.OUTPUT_TOKENS)
+        val response = service.complete(key, character.model, turns, character.temperature, service.outputLimit)
         database.withTransaction {
-            dao.insertMessage(MessageEntity(characterId = id, role = "assistant", content = response, model = character.model))
+            dao.insertMessage(MessageEntity(characterId = id, role = "assistant", content = response, model = service.responseModel(character.model)))
             dao.saveCharacter(character.copy(updatedAt = System.currentTimeMillis()))
         }
         try {
@@ -72,19 +72,32 @@ class ChatRepository(private val database: ChatDatabase, private val service: Ch
         compact(checkNotNull(dao.character(id)), key, force = true)
     }
 
+    private fun inputBudget(character: CharacterEntity): Int =
+        minOf(character.contextTokens, service.contextLimit ?: character.contextTokens) - service.outputLimit - if (service.local) 128 else 512
+
+    private fun prompt(character: CharacterEntity, memory: MemoryEntity?, messages: List<MessageEntity>) =
+        ConversationPolicy.prompt(character, memory, messages, roleplay = service.local)
+
     private suspend fun compact(character: CharacterEntity, key: String, force: Boolean) {
         while (true) {
             val memory = dao.memory(character.id)
             val all = dao.messages(character.id)
             val pending = all.filter { it.id > (memory?.throughMessageId ?: 0) }
-            val overBudget = ConversationPolicy.cost(ConversationPolicy.prompt(character, memory, all)) > ConversationPolicy.inputBudget(character)
+            val overBudget = service.tokenCount(prompt(character, memory, all)) > inputBudget(character)
             if (!force && pending.size <= ConversationPolicy.SUMMARY_TRIGGER && !overBudget) return
-            val batch = ConversationPolicy.summaryBatch(character, memory, pending)
+            // With a small on-device context, summarize more of the prefix when necessary.
+            // Never discard turns or include the last pending user message in the summary.
+            val retain = if (service.local && overBudget) 2 else ConversationPolicy.RETAIN_MESSAGES
+            val batch = mutableListOf<MessageEntity>()
+            for (message in pending.dropLast(retain)) {
+                if (service.tokenCount(ConversationPolicy.summaryPrompt(memory, batch + message, service.local)) > inputBudget(character)) break
+                batch += message
+            }
             if (batch.isEmpty()) {
-                if (overBudget) error("モデルのコンテキストが不足しています。キャラクターの設定で上限の大きいモデルを選んでください。")
+                if (overBudget) error(if (service.local) "端末モデルの文脈上限（4096トークン）を超えています。キャラ設定・記憶・直近のメッセージを短くしてください。履歴は保存済みです。" else "モデルのコンテキストが不足しています。キャラクターの設定で上限の大きいモデルを選んでください。")
                 return
             }
-            val summary = service.complete(key, character.model, ConversationPolicy.summaryPrompt(memory, batch), 0.2f, 768)
+            val summary = service.complete(key, character.model, ConversationPolicy.summaryPrompt(memory, batch, service.local), 0.2f, service.summaryLimit)
             require(summary.isNotBlank() && summary.length <= 3000) { "要約が長すぎます。別のモデルで再試行してください。" }
             // Summary and cursor are committed together; full history is never removed.
             dao.saveMemory(MemoryEntity(character.id, summary, batch.last().id))

@@ -1,25 +1,28 @@
 # MEL Chat
 
-自分専用のAndroidキャラクターチャット。Kotlin / Jetpack Compose / OpenRouter / Room。
+自分専用のAndroidキャラクターチャット。Kotlin / Jetpack Compose / llama.cpp / Room。端末内LLMが標準で、OpenRouterも選択できます。
 
 ## Galaxyから使う
 
 1. GitHubでこのリポジトリの **Actions → MEL Chat APK → Run workflow** を開く。開発版はブランチに`codex/mel-chat-mvp`を選ぶ。
 2. 成功した実行の **Artifacts → MEL-Chat-APK** をダウンロードし、Galaxyの「マイファイル」でZIPを展開する。
 3. `MEL-Chat.apk` を開く。必要な場合、そのファイルを開いたアプリに「不明なアプリのインストール」を許可する。
-4. MEL Chatの右上の設定でOpenRouter APIキー（`sk-or-…`）を登録する。キーはGitHubへ登録しない。
+4. 右上の設定で「推奨モデルを取得」を押す。Wi-Fiで約2.5GBを取得後、会話も要約も端末内で動く。APIキー不要。
 5. キャラクターを作成するか「メル」を選び、会話をはじめる。
 
 GitHubにコードを反映した後は、PCやAndroid StudioなしでAPKを作成・取得できます。Foldの展開時は740dp以上で2ペイン、閉じた画面では一覧と会話を切り替えます。
 
+詳細は[ローカルLLMの使い方・独自モデル化の工程](docs/local-llm.md)を参照。独自の重みの追加学習は未実施です。MEL RPはキャラと物語を重視した会話設定です。
+
 ## MVPの機能
 
 - キャラクターの作成・編集・削除、性格・世界観・最初の挨拶の設定。
-- OpenRouter経由のAIチャット。通信停止、保存済みの未回答メッセージの再試行。
+- GGUFモデルで端末内の会話・要約。推奨モデル取得、外部GGUF取り込み・切替・削除。停止、未回答メッセージの再試行。
+- 「端末内で動かす」をOFFにした場合のみOpenRouterを使用。APIキーはアプリで登録し、GitHubには登録しない。
 - 公開モデルカタログの検索、料金表示、キャラクター別のモデル選択、任意のモデルIDの直接入力。
 - APIキーはAndroid KeystoreのAES鍵とAES-GCMで暗号化し、アプリ専用領域に保存。平文表示・ログ出力なし。
 - キャラクター、全会話履歴、キャラクターごとの要約をRoomに永続保存。
-- 未要約のメッセージが24件を超えたとき、または文脈予算を超えたときに自動要約。直近8件は未要約の文脈として保持。
+- 未要約24件超、または文脈予算超過で自動要約。通常は直近8件、ローカルで文脈不足の場合は直近2件まで保持して要約。
 - 記憶の手動編集・手動要約。モデルを切り替えても会話・記憶は継続。
 - ダークテーマ、日本語UI、画面幅に応じたFold向けレイアウト。
 
@@ -27,11 +30,11 @@ GitHubにコードを反映した後は、PCやAndroid StudioなしでAPKを作�
 
 ## 記憶とデータ
 
-要約は「既存の記憶＋新しく要約するログ」から作成し、要約本文と要約済みメッセージIDを同一のRoomレコードへ保存します。失敗した場合は更新位置を進めず、元の履歴も削除しません。要約には選択したチャットモデルを使うため、API料金が発生します。長期記憶は圧縮した要約であり、全文の完全な再現を保証しません。
+要約は「既存の記憶＋新しく要約するログ」から作成し、本文と更新位置を同時に保存します。失敗時に位置を進めず、履歴原文も消しません。ローカルでは端末の同じモデルで処理し、OpenRouterを選択した場合のみAPI料金が発生します。要約は圧縮された記憶で、全文の完全な再現を保証しません。
 
-直近の会話・キャラクター設定・記憶をOpenRouterと選択モデルの提供元へ送信します。APIキーはOpenRouterの認証にのみ使用します。会話DBはAndroidのアプリ専用領域にありますが、DB自体は暗号化していません。OSによるアプリのクラウドバックアップと端末移行は無効です。アンインストールでローカルデータが消えるため注意してください。MVPにはエクスポート機能はありません。
+ローカルでは会話・設定・記憶を外部送信しません。OpenRouterを明示選択した場合は会話の文脈をOpenRouterとモデル提供元へ送信します。APIキーはOpenRouterの認証だけに使用します。Roomの会話DB自体は暗号化していません。OSのクラウドバックアップと端末移行は無効です。アンインストールでデータが消えます。MVPにはエクスポート機能はありません。
 
-文脈の長さはUTF-8バイト数から保守的に見積もり、出力1024トークンと余白を確保します。モデルIDを直接入力した場合は、そのモデルの実際のコンテキスト上限以下を設定してください。直近8件や設定だけで上限を超える場合は、大きいコンテキストのモデルへ変更して再試行してください。会話を黙って切り捨てる動作はありません。
+ローカルは実際のトークナイザーで入力を数え、文脈4096・出力512トークンと余白を確保します。OpenRouterはUTF-8バイト数から保守的に見積もり、出力1024トークンを確保します。OpenRouterのID直接入力時は実際の上限以下に設定してください。設定や直近の投稿だけで上限を超える場合はエラーを出し、会話を黙って切り捨てません。
 
 ## 更新インストールの署名
 
@@ -47,19 +50,19 @@ CIは復元した鍵を`MEL_SIGNING_KEYSTORE_FILE`で明示指定します。ロ
 
 ## 開発と検証
 
-JDK 17、Android SDK platform 36 / build-tools 35.0.0。
+JDK 17、Android SDK platform 36 / build-tools 35.0.0、NDK 27.2.12479018、CMake 3.22.1。APKはarm64-v8a向け。
 
 ```sh
 ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
 ```
 
-Windowsでは`gradlew.bat`を使用します。この作業環境の日本語パス・OneDriveでの再ビルドには、文字コードを調整しビルド出力をWindowsの一時フォルダーに置く`./scripts/build-local.ps1`を使ってください。実際の出力先は`.tools/local-build-output.txt`に記録します。`.tools`内のJDK/SDKを使用し、`.tools`はGit管理しません。初回の取得用`setup-local.ps1`はAndroid SDKライセンスを承諾します。
+Windowsでは`gradlew.bat`を使用します。この日本語パス・OneDrive環境では`./scripts/build-local.ps1`を使います。NDK用に公開ソースとSDKをASCIIの一時パスへコピーし、出力先を`.tools/local-build-output.txt`へ記録します。署名鍵はコピーせず元のバックアップを参照します。`.tools`はGit管理しません。`setup-local.ps1`は必要なツールを取得してSDKライセンスを承諾します。
 
 APK: `app/build/outputs/apk/debug/app-debug.apk`。テスト: `app/build/reports/tests/testDebugUnitTest/index.html`。Lint: `app/build/reports/lint-results-debug.html`。
 
 テストは文脈予算、要約の更新位置、キャラクター間の記憶分離、モデル切り替え、履歴の永続化、再試行時の重複防止、削除時の参照整合性、HTTP認証・リクエスト・エラー処理・キャンセルを検証します。OpenRouter実サービスとの会話には利用者のAPIキーが必要です。
 
-既存のMEL StudioからGradle Wrapper・互換性のある依存バージョン・Keystore暗号化処理を流用しました。従来のアーカイブとAPKは保持し、新アプリは`jp.mel.chat`として独立しています。
+既存のMEL StudioからGradle Wrapper・互換性のある依存バージョン・Keystore暗号化処理・llama.cppソースを流用しました。従来のアーカイブとAPKは保持し、新アプリは`jp.mel.chat`として独立しています。[第三者ライセンス](THIRD_PARTY_NOTICES.md)も参照してください。
 
 ## API仕様の参照
 
