@@ -109,6 +109,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun cancel() { work?.cancel() }
+    fun editPending(id: String, text: String, done: () -> Unit) = perform {
+        repository.editPending(id, text)
+        withContext(Dispatchers.Main) { done() }
+    }
     fun save(character: CharacterEntity, done: () -> Unit) = perform {
         repository.save(character)
         withContext(Dispatchers.Main) { select(character.id); done() }

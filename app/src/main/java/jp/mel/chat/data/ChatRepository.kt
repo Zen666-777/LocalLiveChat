@@ -32,6 +32,14 @@ class ChatRepository(private val database: ChatDatabase, private val service: Ch
 
     suspend fun delete(id: String) = mutex.withLock { dao.deleteCharacter(id) }
 
+    suspend fun editPending(id: String, text: String) = mutex.withLock {
+        val value = text.trim()
+        require(value.isNotEmpty() && value.length <= 6000) { "メッセージは1〜6000文字で入力してください。" }
+        val pending = dao.messages(id).lastOrNull()
+        check(pending?.role == "user") { "編集できる未回答の投稿がありません。" }
+        dao.updateMessage(checkNotNull(pending).copy(content = value))
+    }
+
     suspend fun editMemory(id: String, text: String) = mutex.withLock {
         require(text.length <= 3000) { "長期記憶は3000文字以内で入力してください。" }
         checkNotNull(dao.character(id)) { "キャラクターが見つかりません。" }

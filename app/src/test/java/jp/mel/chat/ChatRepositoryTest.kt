@@ -121,6 +121,18 @@ class ChatRepositoryTest {
         assertEquals("user", repository.dao.messages("a").last().role)
         assertNull(repository.dao.memory("a"))
     }
+    @Test fun editingOversizedPendingTurnEnablesRetryWithoutDuplicatingHistory() = runBlocking {
+        fake.localMode = true
+        repository.save(a)
+        assertTrue(runCatching { repository.send("a", "x".repeat(5000), "") }.isFailure)
+        val before = repository.dao.messages("a").last().id
+        repository.editPending("a", "shorter message")
+        assertEquals(before, repository.dao.messages("a").last().id)
+        repository.send("a", null, "")
+        assertEquals(3, repository.dao.messages("a").size)
+        assertEquals("shorter message", repository.dao.messages("a")[1].content)
+        assertTrue(runCatching { repository.editPending("a", "cannot change answered turn") }.isFailure)
+    }
     private class FakeService : ChatService {
         var localMode = false
         override val local get() = localMode

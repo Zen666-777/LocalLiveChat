@@ -108,6 +108,7 @@ fun MelApp(vm: ChatViewModel) {
                                 onBack = { showChat = false }, onEdit = { editing = character; showEditor = true },
                                 onMemory = { showMemory = true }, onModel = { if (offline) showSettings = true else showModel = true }, onSettings = { showSettings = true },
                                 onSend = { text, accepted -> vm.send(character.id, text, accepted) },
+                                onEditPending = { text, done -> vm.editPending(character.id, text, done) },
                                 onRetry = { vm.send(character.id, null) }, onStop = vm::cancel)
                         }
                     }
@@ -181,9 +182,12 @@ private fun Avatar(name: String, size: Int) {
 @Composable
 private fun ChatPane(character: CharacterEntity, messages: List<MessageEntity>, memory: MemoryEntity?, busy: Boolean,
     hasKey: Boolean, wide: Boolean, offline: Boolean, localModelName: String?, onBack: () -> Unit, onEdit: () -> Unit, onMemory: () -> Unit,
-    onModel: () -> Unit, onSettings: () -> Unit, onSend: (String, () -> Unit) -> Unit, onRetry: () -> Unit, onStop: () -> Unit) {
+    onModel: () -> Unit, onSettings: () -> Unit, onSend: (String, () -> Unit) -> Unit,
+    onEditPending: (String, () -> Unit) -> Unit, onRetry: () -> Unit, onStop: () -> Unit) {
     var draft by rememberSaveable(character.id) { mutableStateOf("") }
     val pending = messages.lastOrNull()?.role == "user"
+    var editingPending by remember(character.id) { mutableStateOf(false) }
+    var pendingText by remember(character.id) { mutableStateOf("") }
     val scroll = rememberLazyListState()
     LaunchedEffect(character.id, messages.size, busy) { if (messages.isNotEmpty()) scroll.animateScrollToItem(messages.size - 1) }
     Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF181321), Ink, Ink)))) {
@@ -221,6 +225,7 @@ private fun ChatPane(character: CharacterEntity, messages: List<MessageEntity>, 
         }
         if (pending && !busy) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("未回答のメッセージを保存しています", color = Muted, fontSize = 11.sp, modifier = Modifier.weight(1f))
+            TextButton({ pendingText = messages.last().content; editingPending = true }) { Text("編集") }
             TextButton(onRetry) { Text("再試行") }
         }
         if (!hasKey) TextButton(onSettings, Modifier.align(Alignment.CenterHorizontally)) { Text(if (offline) "モデルを取得して会話する" else "APIキーを設定して会話する") }
@@ -238,6 +243,12 @@ private fun ChatPane(character: CharacterEntity, messages: List<MessageEntity>, 
         Text(if (offline) "会話・要約・記憶はこの端末の中で処理します" else "会話と要約は選択したモデルへ送信されます", fontSize = 9.sp, color = Muted.copy(alpha = 0.7f),
             modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 8.dp))
     }
+    if (editingPending) AlertDialog(onDismissRequest = { if (!busy) editingPending = false },
+        title = { Text("未回答の投稿を編集") },
+        text = { OutlinedTextField(pendingText, { if (it.length <= 6000) pendingText = it },
+            minLines = 3, maxLines = 8, enabled = !busy, supportingText = { Text("文脈上限を超えた場合は短くして、保存後に再試行してください。") }) },
+        confirmButton = { TextButton({ onEditPending(pendingText) { editingPending = false } }, enabled = !busy && pendingText.isNotBlank()) { Text("保存") } },
+        dismissButton = { TextButton({ editingPending = false }, enabled = !busy) { Text("キャンセル") } })
 }
 
 @Composable

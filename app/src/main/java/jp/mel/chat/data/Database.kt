@@ -43,6 +43,7 @@ data class MemoryEntity(
 
 @Dao
 interface ChatDao {
+    @Update suspend fun updateMessage(message: MessageEntity)
     @Query("SELECT * FROM characters ORDER BY updatedAt DESC") fun observeCharacters(): Flow<List<CharacterEntity>>
     @Query("SELECT * FROM characters ORDER BY updatedAt DESC") suspend fun characters(): List<CharacterEntity>
     @Query("SELECT * FROM characters WHERE id = :id") suspend fun character(id: String): CharacterEntity?

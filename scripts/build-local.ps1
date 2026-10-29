@@ -23,12 +23,16 @@ New-Item -ItemType Directory -Force $taskSdkStage | Out-Null
 & robocopy $env:ANDROID_HOME $taskSdkStage /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1
 if ($LASTEXITCODE -ge 8) { throw 'Could not stage Android SDK' }
 $env:ANDROID_HOME = $taskSdkStage
-$taskSourceStage = Join-Path $taskStage ([Guid]::NewGuid().ToString('N'))
+$taskSourceStage = Join-Path $taskStage 'source'
 New-Item -ItemType Directory -Force $taskSourceStage | Out-Null
 foreach ($taskDirectory in @('app/src', 'app/schemas', 'gradle', 'config')) {
     $taskSource = Join-Path $taskRoot $taskDirectory
     $taskDestination = Join-Path $taskSourceStage $taskDirectory
-    & robocopy $taskSource $taskDestination /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
+    # /MIR removes stale staged source files only, never workspace files or SDKs.
+    $taskDestination = [IO.Path]::GetFullPath($taskDestination)
+    if (!$taskDestination.StartsWith($taskSourceStage + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Mirror destination outside the temporary source workspace' }
+    if ((Test-Path -LiteralPath $taskDestination) -and ((Get-Item -LiteralPath $taskDestination -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Refusing to mirror into a junction' }
+    & robocopy $taskSource $taskDestination /MIR /XJ /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "Could not stage $taskDirectory" }
 }
 foreach ($taskFile in @('settings.gradle.kts', 'build.gradle.kts', 'gradle.properties', 'gradlew.bat', 'app/build.gradle.kts')) {
