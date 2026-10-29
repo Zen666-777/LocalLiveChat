@@ -4,13 +4,17 @@
 
 1. 固定署名の新しい `MEL-Chat.apk` を更新インストールする。
 2. 右上の設定で「端末内で動かす」がONになっていることを確認する。
-3. 「推奨モデルを取得」を押す。Wi-Fiで約2.5GBを取得する。APIキー・PCは不要。
+3. 「推奨モデルを取得」を押す。約2.5GBを取得する。標準はWi-Fiだが「モバイル通信も使う」を選べる。APIキー・PCは不要。
 4. 取得後にキャラを選び、会話する。初回はモデルの読み込みで時間がかかる。
 5. 機内モードでも会話できる。自動要約も端末の同じモデルで処理する。
 
 Android DownloadManagerで取得するため、アプリを閉じても取得は続けられる。
 取得後のSHA-256確認はアプリを開いた状態で行う。不一致の重みを自動採用しない。
-待機が続く場合はWi-Fiと空き容量を確認する。
+旧版のWi-Fi待ちの取得は「モバイル通信で最初から取得」でやり直せる。
+その場合は取得済みの部分を破棄して約2.5GBを取り直す。ローミング通信は許可しない。
+端末側の大容量ダウンロード制限や接続待ちは、理由に応じて表示する。
+アプリからの取得が進まない場合は「ブラウザでモデルを取得」を開き、取得後に
+アプリ内の取得を中止して「別のGGUFモデルを読み込む」で選ぶ。
 
 「別のGGUFモデルを読み込む」で、マイファイルから互換性のあるモデルを選べる。
 アプリが保存領域へコピーするので、元のファイルを移動しても使える。
@@ -67,3 +71,5 @@ Galaxyの速度・発熱やAndroidのファイル選択画面は実機での確�
 - https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
 - https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/blob/18727206c51467496bfba014368bd0a30e97f411/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
 - https://github.com/ggml-org/llama.cpp/blob/master/docs/android.md
+- https://developer.android.com/reference/android/app/DownloadManager.Request#setAllowedOverMetered(boolean)
+- https://developer.android.com/reference/android/app/DownloadManager#PAUSED_QUEUED_FOR_WIFI

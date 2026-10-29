@@ -90,7 +90,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         app.backend.setOffline(value)
         models.value = emptyList()
     }
-    fun downloadModel() = perform { app.deviceModels.download() }
+    fun downloadModel(allowMobile: Boolean = false) = perform { app.deviceModels.download(allowMobile) }
+    fun restartModelWithMobile() = perform { app.deviceModels.restartWithMobile() }
     fun cancelModelDownload() = perform { app.deviceModels.cancelDownload() }
     fun importModel(uri: Uri) = perform {
         app.device.release()

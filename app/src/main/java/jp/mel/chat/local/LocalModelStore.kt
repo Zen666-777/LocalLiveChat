@@ -20,7 +20,8 @@ import java.util.UUID
 
 data class DeviceModel(val id: String, val name: String, val sha256: String, val bytes: Long)
 data class ModelState(val models: List<DeviceModel> = emptyList(), val activeId: String? = null,
-    val downloadId: Long = -1, val progress: Float = 0f, val status: String = "", val error: String? = null) {
+    val downloadId: Long = -1, val progress: Float = 0f, val status: String = "", val error: String? = null,
+    val mobileAllowed: Boolean = false) {
     val active get() = models.find { it.id == activeId }
     val downloading get() = downloadId >= 0
 }
@@ -46,34 +47,39 @@ class LocalModelStore(private val context: Context) {
                 DeviceModel(item.getString("id"), item.getString("name"), item.getString("sha"), item.getLong("bytes"))
             } }.filter { it.id.matches(Regex("[a-zA-Z0-9-]+")) }
         }.getOrDefault(emptyList())
-        return ModelState(list, prefs.getString("active", null), prefs.getLong("download", -1))
+        return ModelState(list, prefs.getString("active", null), prefs.getLong("download", -1),
+            mobileAllowed = prefs.getBoolean("download_mobile", false))
     }
     private fun save(value: ModelState) {
         val array = JSONArray().apply { value.models.forEach {
             put(JSONObject().put("id", it.id).put("name", it.name).put("sha", it.sha256).put("bytes", it.bytes))
         } }
         check(prefs.edit().putString("models", array.toString()).putString("active", value.activeId)
-            .putLong("download", value.downloadId).commit()) { "モデル設定を保存できません。" }
+            .putLong("download", value.downloadId).putBoolean("download_mobile", value.mobileAllowed).commit()) { "モデル設定を保存できません。" }
         state.value = value
     }
     fun active() = state.value.active
     fun file(model: DeviceModel) = File(directory, "${model.id}.gguf")
     fun select(id: String) { require(state.value.models.any { it.id == id }); save(state.value.copy(activeId = id)) }
 
-    fun download() {
+    fun download(allowMobile: Boolean = false) {
         check(!state.value.downloading) { "モデルを取得中です。" }
         state.value.models.find { it.sha256 == SHA }?.let { select(it.id); return }
-        check(directory.usableSpace > SIZE + 256L * 1024 * 1024) { "空き容量が足りません。約2.8GB以上を確保してください。" }
         val destination = File(directory, "recommended.partial")
         check(!destination.exists() || destination.delete())
+        check(directory.usableSpace > SIZE + 256L * 1024 * 1024) { "空き容量が足りません。約2.8GB以上を確保してください。" }
         val request = DownloadManager.Request(Uri.parse(URL)).setTitle("MEL Chat ローカルモデル")
-            .setDescription("約2.5GB・Wi-Fiで取得。会話データは送信しません。")
-            .setAllowedOverMetered(false).setAllowedOverRoaming(false)
+            .setDescription(if (allowMobile) "約2.5GB・モバイル通信も使用。会話データは送信しません。" else "約2.5GB・Wi-Fiで取得。会話データは送信しません。")
+            .setAllowedOverMetered(allowMobile).setAllowedOverRoaming(false)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setDestinationUri(Uri.fromFile(destination))
         val id = manager.enqueue(request)
-        save(state.value.copy(downloadId = id, progress = 0f, status = "Wi-Fiで取得を開始しました", error = null))
+        check(id >= 0) { "ダウンロードを開始できませんでした。再試行してください。" }
+        save(state.value.copy(downloadId = id, progress = 0f,
+            status = if (allowMobile) "モバイル通信も許可して取得を開始しました" else "Wi-Fiで取得を開始しました",
+            error = null, mobileAllowed = allowMobile))
     }
+    fun restartWithMobile() { cancelDownload(); download(allowMobile = true) }
     fun cancelDownload() {
         if (state.value.downloading) manager.remove(state.value.downloadId)
         File(directory, "recommended.partial").delete()
@@ -89,12 +95,14 @@ class LocalModelStore(private val context: Context) {
                 cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON)))
         }
         if (result == null || result.first == DownloadManager.STATUS_FAILED) {
-            save(state.value.copy(downloadId = -1, status = "", error = "取得できませんでした。Wi-Fiと空き容量を確認して再試行してください。"))
+            manager.remove(id)
+            File(directory, "recommended.partial").delete()
+            save(state.value.copy(downloadId = -1, status = "", error = "取得できませんでした。ネット接続と空き容量を確認して再試行してください。"))
             return
         }
         if (result.first != DownloadManager.STATUS_SUCCESSFUL) {
             state.value = state.value.copy(progress = (result.second.toFloat() / SIZE).coerceIn(0f, 1f),
-                status = if (result.first == DownloadManager.STATUS_PAUSED) "Wi-Fi接続・ダウンロードの再開を待っています" else "モデルを取得中…")
+                status = if (result.first == DownloadManager.STATUS_PAUSED) pauseMessage(result.third, state.value.mobileAllowed) else "モデルを取得中…")
             return
         }
         state.value = state.value.copy(status = "モデルの整合性を確認中…", progress = 1f)
@@ -181,4 +189,13 @@ class LocalModelStore(private val context: Context) {
         val version = ByteBuffer.wrap(header, 4, 4).order(ByteOrder.LITTLE_ENDIAN).int
         require(header.copyOfRange(0, 4).contentEquals("GGUF".toByteArray()) && version in 2..3) { "対応するGGUF v2/v3モデルを選んでください。" }
     }
+}
+
+internal fun pauseMessage(reason: Int, mobileAllowed: Boolean): String = when (reason) {
+    DownloadManager.PAUSED_QUEUED_FOR_WIFI -> if (mobileAllowed)
+        "端末側の大容量ダウンロード制限でWi-Fi待ちです。ブラウザからの取得も選べます。"
+        else "Wi-Fi待ちです。モバイル通信を使う場合は下から取得をやり直せます。"
+    DownloadManager.PAUSED_WAITING_FOR_NETWORK -> if (mobileAllowed) "ネット接続を待っています" else "Wi-Fi接続を待っています"
+    DownloadManager.PAUSED_WAITING_TO_RETRY -> "接続エラーのため再試行を待っています"
+    else -> "ダウンロードの再開を待っています"
 }

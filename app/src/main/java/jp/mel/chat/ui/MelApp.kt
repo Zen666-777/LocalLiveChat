@@ -22,6 +22,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -286,6 +287,8 @@ private fun Sheet(title: String, onDismiss: () -> Unit, content: @Composable Col
 private fun SettingsDialog(hasKey: Boolean, busy: Boolean, offline: Boolean, deviceModels: ModelState, vm: ChatViewModel,
     onSave: (String, () -> Unit) -> Unit, onClear: () -> Unit, onDismiss: () -> Unit) {
     var key by remember { mutableStateOf("") }
+    var allowMobile by remember { mutableStateOf(false) }
+    val uriHandler = LocalUriHandler.current
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::importModel) }
     var deleting by remember { mutableStateOf<String?>(null) }
     Sheet("接続の設定", onDismiss) {
@@ -300,14 +303,30 @@ private fun SettingsDialog(hasKey: Boolean, busy: Boolean, offline: Boolean, dev
             if (offline) {
                 Text("MEL RP · ローカルモデル", color = Lavender, fontSize = 13.sp)
                 Text("初回だけモデルを取得します。その後は機内モードでも会話・自動要約ができます。キャラの口調と物語の連続性を重視した会話設定を使います。追加学習済みの独自モデルではありません。", color = Muted, fontSize = 12.sp)
-                Text("推奨: ${LocalModelStore.NAME}\n約2.5GB · Apache 2.0 · Wi-Fiで取得\n端末での速度・発熱はモデルと空きメモリで変わります。", color = Muted, fontSize = 12.sp)
+                Text("推奨: ${LocalModelStore.NAME}\n約2.5GB · Apache 2.0\n端末での速度・発熱はモデルと空きメモリで変わります。", color = Muted, fontSize = 12.sp)
                 if (deviceModels.downloading) {
                     LinearProgressIndicator(progress = { deviceModels.progress }, modifier = Modifier.fillMaxWidth())
                     Text("${(deviceModels.progress * 100).toInt()}%  ${deviceModels.status}", fontSize = 11.sp, color = Mint)
+                    if (!deviceModels.mobileAllowed) {
+                        OutlinedButton(vm::restartModelWithMobile, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("モバイル通信で最初から取得（約2.5GB）") }
+                        Text("取得済みの部分を破棄し、最初から取り直します。", color = Muted, fontSize = 11.sp)
+                    }
                     TextButton(vm::cancelModelDownload, enabled = !busy) { Text("取得を中止") }
-                } else Button(vm::downloadModel, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (deviceModels.models.any { it.sha256 == LocalModelStore.SHA }) "推奨モデルを選択" else "推奨モデルを取得（Wi-Fi・約2.5GB）")
+                } else {
+                    val hasRecommended = deviceModels.models.any { it.sha256 == LocalModelStore.SHA }
+                    if (!hasRecommended) Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(allowMobile, { allowMobile = it }, enabled = !busy)
+                        Text("モバイル通信も使う（約2.5GB）", fontSize = 12.sp, color = Muted)
+                    }
+                    Button({ vm.downloadModel(allowMobile) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (hasRecommended) "推奨モデルを選択" else if (allowMobile) "推奨モデルを取得（モバイル通信可）" else "推奨モデルを取得（Wi-Fi）")
+                    }
                 }
+                TextButton({
+                    runCatching { uriHandler.openUri(LocalModelStore.URL) }
+                        .onFailure { vm.notice.value = "ブラウザを開けませんでした。別のブラウザでモデルを取得してください。" }
+                }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("ブラウザでモデルを取得（約2.5GB）") }
+                Text("ブラウザで取得した場合は、下の「別のGGUFモデルを読み込む」で選択してください。アプリ内の取得が進行中なら先に中止してください。", fontSize = 11.sp, color = Muted)
                 deviceModels.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
                 if (!deviceModels.downloading && deviceModels.status.isNotBlank()) Text(deviceModels.status, color = Mint, fontSize = 11.sp)
                 OutlinedButton({ importer.launch(arrayOf("*/*")) }, enabled = !busy && !deviceModels.downloading, modifier = Modifier.fillMaxWidth()) { Text("別のGGUFモデルを読み込む") }
