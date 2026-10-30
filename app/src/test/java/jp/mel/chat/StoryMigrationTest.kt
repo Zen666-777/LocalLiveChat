@@ -42,7 +42,7 @@ class StoryMigrationTest {
             old.execSQL("INSERT INTO memories VALUES ('second', 'separate memory', 10, 104)")
             old.version = 1
         }
-        val db = Room.databaseBuilder(context, ChatDatabase::class.java, name).addMigrations(ChatDatabase.MIGRATION_1_2).allowMainThreadQueries().build()
+        val db = Room.databaseBuilder(context, ChatDatabase::class.java, name).addMigrations(ChatDatabase.MIGRATION_1_2, ChatDatabase.MIGRATION_2_3).allowMainThreadQueries().build()
         try {
             val dao = db.chatDao()
             assertEquals("", dao.character("legacy")!!.details)

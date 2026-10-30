@@ -5,10 +5,14 @@ import jp.mel.chat.network.ChatService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.flow.MutableStateFlow
 
 class ChatRepository(private val database: ChatDatabase, private val service: ChatService) {
     val dao = database.chatDao()
     private val mutex = Mutex()
+    private val recall = MemoryRecall(database)
+    val recallTrace = MutableStateFlow<RecallTrace?>(null)
+    val memoryStage = MutableStateFlow("")
 
     suspend fun initialize() = mutex.withLock {
         if (dao.characters().isEmpty()) saveUnlocked(CharacterEntity(
@@ -38,6 +42,7 @@ class ChatRepository(private val database: ChatDatabase, private val service: Ch
     suspend fun savePlot(plot: PlotEntity, loreIds: Set<String>) = mutex.withLock {
         require(plot.title.isNotBlank() && plot.title.length <= 80) { "プロット名は1〜80文字で入力してください。" }
         require(plot.setup.length <= 6000 && plot.greeting.length <= 2000) { "プロット設定は6000文字、挨拶は2000文字以内で入力してください。" }
+        require(plot.replyStyle in listOf("roleplay", "novel") && plot.replyTokens in listOf(0, 128, 256, 512, 768)) { "返信の形式・長さを確認してください。" }
         checkNotNull(dao.character(plot.characterId)) { "キャラクターが見つかりません。" }
         val existing = dao.plot(plot.id)
         check(existing == null || existing.characterId == plot.characterId) { "プロットのキャラクターは変更できません。" }
@@ -87,7 +92,29 @@ class ChatRepository(private val database: ChatDatabase, private val service: Ch
         require(value.isNotEmpty() && value.length <= 6000) { "メッセージは1〜6000文字で入力してください。" }
         val pending = dao.messages(id).lastOrNull()
         check(pending?.role == "user") { "編集できる未回答の投稿がありません。" }
-        dao.updateMessage(checkNotNull(pending).copy(content = value))
+        database.withTransaction {
+            dao.updateMessage(checkNotNull(pending).copy(content = value))
+            dao.indexMessages(listOf(MessageSearchEntity(pending.id, SearchText.index(value))))
+        }
+    }
+
+    suspend fun saveMemoryNote(note: MemoryNoteEntity) = mutex.withLock {
+        val plot = checkNotNull(dao.plot(note.plotId)) { "プロットが見つかりません。" }
+        check(plot.characterId == note.characterId) { "別のキャラクターの記憶は使用できません。" }
+        val old = dao.memoryNote(note.id)
+        check(old == null || (old.plotId == note.plotId && old.characterId == note.characterId)) { "記憶のプロットは変更できません。" }
+        require(note.title.isNotBlank() && note.title.length <= 80 && note.content.isNotBlank() && note.content.length <= 1500) { "記憶の名前は1〜80文字、本文は1〜1500文字で入力してください。" }
+        require(note.category in ConversationPolicy.memoryCategories && note.keywords.length <= 300) { "記憶の分類・キーワードを確認してください。" }
+        if (note.sourceMessageId != null) checkNotNull(dao.message(note.plotId, note.sourceMessageId)) { "元の会話がこのプロットに見つかりません。" }
+        check(!note.pinned || !note.enabled || dao.memoryNotes(note.plotId).count { it.id != note.id && it.pinned && it.enabled } < 8) { "常に参照する記憶は8件までです。必要に応じて切り替えてください。" }
+        dao.saveMemoryNote(note.copy(title = note.title.trim(), content = note.content.trim(), updatedAt = System.currentTimeMillis()))
+        recallTrace.value = null
+    }
+    suspend fun deleteMemoryNote(id: String) = mutex.withLock { dao.deleteMemoryNote(id); recallTrace.value = null }
+    suspend fun searchMemory(plotId: String, query: String): List<RecalledMessage> = mutex.withLock {
+        checkNotNull(dao.plot(plotId)) { "プロットが見つかりません。" }
+        require(query.length <= 300) { "検索語は300文字以内で入力してください。" }
+        recall.find(plotId, query, limit = 30)
     }
 
     suspend fun editMemory(id: String, text: String) = mutex.withLock {
@@ -99,6 +126,7 @@ class ChatRepository(private val database: ChatDatabase, private val service: Ch
 
     /** A saved user turn remains pending until an assistant turn is committed. Retry never reinserts it. */
     suspend fun send(id: String, text: String?, key: String, onPersisted: suspend () -> Unit = {}): String? = mutex.withLock {
+        recallTrace.value = null
         val plot = checkNotNull(dao.plot(id)) { "プロットが見つかりません。" }
         val character = checkNotNull(dao.character(plot.characterId)) { "キャラクターが見つかりません。" }
         val lore = dao.selectedLore(id)
@@ -112,20 +140,47 @@ class ChatRepository(private val database: ChatDatabase, private val service: Ch
         onPersisted()
 
         val core = prompt(character, plot, null, dao.messages(id), lore).filter { it.role == "system" }
-        require(service.tokenCount(core) <= inputBudget(character) - 256) {
-            "キャラ詳細・プロット・ロアだけで文脈上限に近づいています。設定を短くするか、使うロアを減らす・キーワードを指定してください。投稿は保存されています。"
+        require(service.tokenCount(core) <= inputBudget(character, plot) - 256) {
+            "キャラ詳細・プロット・ロア・常に参照する記憶だけで文脈上限に近づいています。設定を短くするか、常時参照する項目を減らしてください。投稿は保存されています。"
         }
-        compact(character, plot, lore, key, force = false)
-        val turns = prompt(character, plot, dao.memory(id), dao.messages(id), lore)
-        require(service.tokenCount(turns) <= inputBudget(character)) {
+        compact(character, plot, lore, key, force = false, onlyIfOverBudget = true)
+        val current = dao.messages(id)
+        val memory = dao.memory(id)
+        val notes = dao.memoryNotes(id).filter { it.enabled }
+        val pinned = notes.filter { it.pinned }
+        var turns = ConversationPolicy.prompt(character, memory, current, roleplay = plot.replyStyle == "roleplay", plot = plot, lore = lore, notes = pinned)
+        val baseCost = service.tokenCount(turns)
+        require(baseCost <= inputBudget(character, plot)) {
             "直近の会話がコンテキスト上限を超えています。より大きい上限のモデルを選んで再試行してください。"
         }
-        val response = service.complete(key, character.model, turns, character.temperature, service.outputLimit)
+        memoryStage.value = "過去の会話を端末内で検索中"
+        val query = current.lastOrNull { it.role == "user" }?.content.orEmpty()
+        val related = notes.filter { !it.pinned }.map { it to SearchText.related(it, query) }.filter { it.second >= 1.0 }
+            .sortedByDescending { it.second }.take(3).map { it.first }
+        val sources = recall.find(id, query, memory?.throughMessageId ?: 0, 6)
+        // Recall is optional, bounded by the actual tokenizer, and never evicts
+        // current dialogue, configured lore, or pinned memories.
+        val usedNotes = pinned.toMutableList()
+        val usedSources = mutableListOf<RecalledMessage>()
+        val recallBudget = minOf(inputBudget(character, plot), baseCost + if (service.local) 700 else 1800)
+        for (note in related) {
+            val candidate = ConversationPolicy.prompt(character, memory, current, plot.replyStyle == "roleplay", plot, lore, usedNotes + note, usedSources)
+            if (service.tokenCount(candidate) <= recallBudget) { usedNotes += note; turns = candidate }
+        }
+        for (source in sources) {
+            val candidate = ConversationPolicy.prompt(character, memory, current, plot.replyStyle == "roleplay", plot, lore, usedNotes, usedSources + source)
+            if (service.tokenCount(candidate) <= recallBudget) { usedSources += source; turns = candidate }
+            if (usedSources.size >= 4) break
+        }
+        val trace = RecallTrace(id, usedSources.toList(), usedNotes.map { it.id }, usedSources.size < minOf(sources.size, 4) || usedNotes.size < pinned.size + related.size)
+        memoryStage.value = ""
+        val response = service.complete(key, character.model, turns, character.temperature, replyLimit(plot))
         database.withTransaction {
             dao.insertMessage(MessageEntity(characterId = character.id, plotId = id, role = "assistant", content = response, model = service.responseModel(character.model)))
             dao.saveCharacter(character.copy(updatedAt = System.currentTimeMillis()))
             dao.savePlot(plot.copy(updatedAt = System.currentTimeMillis()))
         }
+        recallTrace.value = trace
         try {
             compact(character, plot, lore, key, force = false)
             null
@@ -138,25 +193,28 @@ class ChatRepository(private val database: ChatDatabase, private val service: Ch
         compact(checkNotNull(dao.character(plot.characterId)), plot, dao.selectedLore(id), key, force = true)
     }
 
-    private fun inputBudget(character: CharacterEntity): Int =
-        minOf(character.contextTokens, service.contextLimit ?: character.contextTokens) - maxOf(service.outputLimit, service.summaryLimit) - if (service.local) 128 else 512
+    private fun replyLimit(plot: PlotEntity): Int = plot.replyTokens.takeIf { it > 0 } ?: service.outputLimit
+    private fun inputBudget(character: CharacterEntity, plot: PlotEntity): Int =
+        minOf(character.contextTokens, service.contextLimit ?: character.contextTokens) - maxOf(replyLimit(plot), service.summaryLimit) - if (service.local) 128 else 512
 
-    private fun prompt(character: CharacterEntity, plot: PlotEntity, memory: MemoryEntity?, messages: List<MessageEntity>, lore: List<LoreEntryEntity>) =
-        ConversationPolicy.prompt(character, memory, messages, roleplay = service.local, plot = plot, lore = lore)
+    private suspend fun prompt(character: CharacterEntity, plot: PlotEntity, memory: MemoryEntity?, messages: List<MessageEntity>, lore: List<LoreEntryEntity>) =
+        ConversationPolicy.prompt(character, memory, messages, roleplay = plot.replyStyle == "roleplay", plot = plot, lore = lore,
+            notes = dao.memoryNotes(plot.id).filter { it.enabled && it.pinned })
 
-    private suspend fun compact(character: CharacterEntity, plot: PlotEntity, lore: List<LoreEntryEntity>, key: String, force: Boolean) {
+    private suspend fun compact(character: CharacterEntity, plot: PlotEntity, lore: List<LoreEntryEntity>, key: String, force: Boolean, onlyIfOverBudget: Boolean = false) {
         while (true) {
             val memory = dao.memory(plot.id)
             val all = dao.messages(plot.id)
             val pending = all.filter { it.id > (memory?.throughMessageId ?: 0) }
-            val overBudget = service.tokenCount(prompt(character, plot, memory, all, lore)) > inputBudget(character)
+            val overBudget = service.tokenCount(prompt(character, plot, memory, all, lore)) > inputBudget(character, plot)
+            if (onlyIfOverBudget && !overBudget) return
             if (!force && pending.size <= ConversationPolicy.SUMMARY_TRIGGER && !overBudget) return
             // With a small on-device context, summarize more of the prefix when necessary.
             // Never discard turns or include the last pending user message in the summary.
             val retain = if (service.local && overBudget) 2 else ConversationPolicy.RETAIN_MESSAGES
             val batch = mutableListOf<MessageEntity>()
             for (message in pending.dropLast(retain)) {
-                if (service.tokenCount(ConversationPolicy.summaryPrompt(memory, batch + message, service.local)) > inputBudget(character)) break
+                if (service.tokenCount(ConversationPolicy.summaryPrompt(memory, batch + message, service.local)) > inputBudget(character, plot)) break
                 batch += message
             }
             if (batch.isEmpty()) {

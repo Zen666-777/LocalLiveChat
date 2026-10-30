@@ -31,6 +31,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val memory = selectedPlot.flatMapLatest { if (it == null) flowOf(null) else repository.dao.observeMemory(it) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val memoryNotes = selectedPlot.flatMapLatest { if (it == null) flowOf(emptyList()) else repository.dao.observeMemoryNotes(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val recallTrace = repository.recallTrace
     val busy = MutableStateFlow(false)
     val loadingModels = MutableStateFlow(false)
     val models = MutableStateFlow<List<RemoteModel>>(emptyList())
@@ -51,6 +54,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch { localProgress.collect { replies.stage(it.stage) } }
+        viewModelScope.launch { repository.memoryStage.collect { if (it.isNotBlank()) replies.stage(it) } }
         viewModelScope.launch {
             try { withContext(Dispatchers.IO) {
                 if (!preferences.getBoolean("initialized", false)) {
@@ -116,7 +120,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             try { withContext(Dispatchers.IO) { operations.withLock { action() } } }
             catch (e: CancellationException) { notice.value = "処理を停止しました。保存済みのメッセージは再試行できます。"; throw e }
             catch (e: Exception) { notice.value = e.message ?: "処理に失敗しました。再試行してください。" }
-            finally { busy.value = false }
+            finally { repository.memoryStage.value = ""; busy.value = false }
         }
     }
 
@@ -182,6 +186,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun summarize(id: String) = perform {
         repository.summarize(id, requireKey())
         notice.value = "記憶を更新しました。直近の会話と元の履歴も保持しています。"
+    }
+    fun saveMemoryNote(note: MemoryNoteEntity, done: () -> Unit) = perform {
+        repository.saveMemoryNote(note)
+        withContext(Dispatchers.Main) { done() }
+    }
+    fun deleteMemoryNote(id: String, done: () -> Unit) = perform {
+        repository.deleteMemoryNote(id)
+        withContext(Dispatchers.Main) { done() }
+    }
+    suspend fun searchMemory(plotId: String, query: String): List<RecalledMessage> = withContext(Dispatchers.IO) {
+        repository.searchMemory(plotId, query)
     }
     fun saveKey(value: String, done: () -> Unit) = perform {
         app.keys.save(value)

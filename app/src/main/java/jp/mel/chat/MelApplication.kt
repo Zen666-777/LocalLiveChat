@@ -9,7 +9,7 @@ import jp.mel.chat.network.OpenRouterClient
 import jp.mel.chat.local.*
 
 class MelApplication : Application() {
-    val database by lazy { Room.databaseBuilder(this, ChatDatabase::class.java, "mel-chat.db").addMigrations(ChatDatabase.MIGRATION_1_2).build() }
+    val database by lazy { Room.databaseBuilder(this, ChatDatabase::class.java, "mel-chat.db").addMigrations(ChatDatabase.MIGRATION_1_2, ChatDatabase.MIGRATION_2_3).build() }
     val api by lazy { OpenRouterClient() }
     val keys by lazy { SecureApiKeyStore(this) }
     val backend by lazy { BackendSettings(this) }

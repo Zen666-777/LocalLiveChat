@@ -76,7 +76,7 @@ std::vector<llama_token> Engine::tokenize(const std::vector<Turn> &turns) {
     return tokens;
 }
 int Engine::count(const std::vector<Turn> &turns) { return tokenize(turns).size(); }
-std::string Engine::generate(const std::vector<Turn> &turns, float temperature, int maxTokens, const Progress &report) {
+std::string Engine::generate(const std::vector<Turn> &turns, float temperature, int maxTokens, const Progress &report, uint32_t seed) {
     auto tokens = tokenize(turns);
     maxTokens = std::clamp(maxTokens, 1, 768);
     require(tokens.size() + maxTokens + 8 <= llama_n_ctx(context), "会話がモデルの上限を超えました。設定や記憶を短くしてください。");
@@ -103,7 +103,7 @@ std::string Engine::generate(const std::vector<Turn> &turns, float temperature, 
         llama_sampler_chain_add(sampler.get(), llama_sampler_init_top_p(0.95f, 1));
         llama_sampler_chain_add(sampler.get(), llama_sampler_init_min_p(0.05f, 1));
         llama_sampler_chain_add(sampler.get(), llama_sampler_init_temp(temperature));
-        llama_sampler_chain_add(sampler.get(), llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+        llama_sampler_chain_add(sampler.get(), llama_sampler_init_dist(seed));
     }
     std::string output;
     if (report) report(2, 0, maxTokens, "");

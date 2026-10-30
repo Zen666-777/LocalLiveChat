@@ -30,6 +30,8 @@ data class PlotEntity(
     val title: String = "",
     val setup: String = "",
     val greeting: String = "",
+    @ColumnInfo(defaultValue = "'roleplay'") val replyStyle: String = "roleplay",
+    @ColumnInfo(defaultValue = "0") val replyTokens: Int = 0,
     val updatedAt: Long = System.currentTimeMillis()
 )
 
@@ -78,6 +80,30 @@ data class LoreEntryEntity(
 ], indices = [Index(value = ["plotId", "characterId"]), Index(value = ["loreId", "characterId"])])
 data class PlotLoreEntity(val plotId: String, val loreId: String, val characterId: String)
 
+/** Curated story facts are independent of the lossy rolling summary. */
+@Entity(tableName = "memory_notes", foreignKeys = [ForeignKey(
+    entity = PlotEntity::class, parentColumns = ["id", "characterId"], childColumns = ["plotId", "characterId"],
+    onDelete = ForeignKey.CASCADE
+)], indices = [Index(value = ["plotId", "characterId"])])
+data class MemoryNoteEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val plotId: String,
+    val characterId: String,
+    val title: String = "",
+    val category: String = "出来事",
+    val content: String = "",
+    val keywords: String = "",
+    val pinned: Boolean = false,
+    val enabled: Boolean = true,
+    val sourceMessageId: Long? = null,
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+/** Encoded Japanese character n-grams; originals remain in messages, never in a second log. */
+@Fts4(tokenizer = FtsOptions.TOKENIZER_SIMPLE)
+@Entity(tableName = "message_search")
+data class MessageSearchEntity(@PrimaryKey @ColumnInfo(name = "rowid") val messageId: Long, val terms: String)
+
 @Dao
 interface ChatDao {
     @Update suspend fun updateMessage(message: MessageEntity)
@@ -85,12 +111,16 @@ interface ChatDao {
     @Query("SELECT * FROM characters ORDER BY updatedAt DESC") suspend fun characters(): List<CharacterEntity>
     @Query("SELECT * FROM characters WHERE id = :id") suspend fun character(id: String): CharacterEntity?
     @Upsert suspend fun saveCharacter(character: CharacterEntity)
-    @Query("DELETE FROM characters WHERE id = :id") suspend fun deleteCharacter(id: String)
+    @Query("DELETE FROM characters WHERE id = :id") suspend fun deleteCharacterRow(id: String)
+    @Query("DELETE FROM message_search WHERE rowid IN (SELECT id FROM messages WHERE characterId = :id)") suspend fun deleteCharacterSearch(id: String)
+    @Transaction suspend fun deleteCharacter(id: String) { deleteCharacterSearch(id); deleteCharacterRow(id) }
     @Query("SELECT * FROM plots WHERE characterId = :id ORDER BY updatedAt DESC, id") fun observePlots(id: String): Flow<List<PlotEntity>>
     @Query("SELECT * FROM plots WHERE characterId = :id ORDER BY updatedAt DESC, id") suspend fun plots(id: String): List<PlotEntity>
     @Query("SELECT * FROM plots WHERE id = :id") suspend fun plot(id: String): PlotEntity?
     @Upsert suspend fun savePlot(plot: PlotEntity)
-    @Query("DELETE FROM plots WHERE id = :id") suspend fun deletePlot(id: String)
+    @Query("DELETE FROM plots WHERE id = :id") suspend fun deletePlotRow(id: String)
+    @Query("DELETE FROM message_search WHERE rowid IN (SELECT id FROM messages WHERE plotId = :id)") suspend fun deletePlotSearch(id: String)
+    @Transaction suspend fun deletePlot(id: String) { deletePlotSearch(id); deletePlotRow(id) }
     @Query("SELECT * FROM messages WHERE plotId = :id ORDER BY id") fun observeMessages(id: String): Flow<List<MessageEntity>>
     @Query("SELECT * FROM messages WHERE plotId = :id ORDER BY id") suspend fun messages(id: String): List<MessageEntity>
     @Insert suspend fun insertMessage(message: MessageEntity): Long
@@ -107,12 +137,36 @@ interface ChatDao {
     @Upsert suspend fun savePlotLore(link: PlotLoreEntity)
     @Query("DELETE FROM plot_lore WHERE plotId = :plotId") suspend fun clearPlotLore(plotId: String)
     @Query("DELETE FROM plot_lore WHERE plotId = :plotId AND loreId = :loreId") suspend fun removePlotLore(plotId: String, loreId: String)
+    @Query("SELECT * FROM memory_notes WHERE plotId = :plotId ORDER BY pinned DESC, updatedAt DESC, id") fun observeMemoryNotes(plotId: String): Flow<List<MemoryNoteEntity>>
+    @Query("SELECT * FROM memory_notes WHERE plotId = :plotId ORDER BY pinned DESC, updatedAt DESC, id") suspend fun memoryNotes(plotId: String): List<MemoryNoteEntity>
+    @Query("SELECT * FROM memory_notes WHERE id = :id") suspend fun memoryNote(id: String): MemoryNoteEntity?
+    @Upsert suspend fun saveMemoryNote(note: MemoryNoteEntity)
+    @Query("DELETE FROM memory_notes WHERE id = :id") suspend fun deleteMemoryNote(id: String)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun indexMessages(entries: List<MessageSearchEntity>)
+    @Query("SELECT m.* FROM messages m LEFT JOIN message_search s ON s.rowid = m.id WHERE m.plotId = :plotId AND s.rowid IS NULL ORDER BY m.id LIMIT 100")
+    suspend fun unindexedMessages(plotId: String): List<MessageEntity>
+    @Query("SELECT COUNT(*) FROM messages WHERE plotId = :plotId AND id <= :through") suspend fun messageCount(plotId: String, through: Long): Int
+    @Query("SELECT COUNT(*) FROM message_search JOIN messages m ON m.id = message_search.rowid WHERE message_search MATCH :query AND m.plotId = :plotId AND m.id <= :through")
+    suspend fun matchingCount(plotId: String, through: Long, query: String): Int
+    @Query("SELECT m.* FROM message_search JOIN messages m ON m.id = message_search.rowid WHERE message_search MATCH :query AND m.plotId = :plotId AND m.id <= :through ORDER BY m.id DESC LIMIT :limit")
+    suspend fun searchMessages(plotId: String, through: Long, query: String, limit: Int): List<MessageEntity>
+    @Query("SELECT * FROM messages WHERE plotId = :plotId AND id = :messageId") suspend fun message(plotId: String, messageId: Long): MessageEntity?
 }
 
-@Database(entities = [CharacterEntity::class, PlotEntity::class, MessageEntity::class, MemoryEntity::class, LoreEntryEntity::class, PlotLoreEntity::class], version = 2, exportSchema = true)
+@Database(entities = [CharacterEntity::class, PlotEntity::class, MessageEntity::class, MemoryEntity::class, LoreEntryEntity::class, PlotLoreEntity::class, MemoryNoteEntity::class, MessageSearchEntity::class], version = 3, exportSchema = true)
 abstract class ChatDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
     companion object {
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE plots ADD COLUMN replyStyle TEXT NOT NULL DEFAULT 'roleplay'")
+                db.execSQL("ALTER TABLE plots ADD COLUMN replyTokens INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("CREATE TABLE IF NOT EXISTS memory_notes (id TEXT NOT NULL, plotId TEXT NOT NULL, characterId TEXT NOT NULL, title TEXT NOT NULL, category TEXT NOT NULL, content TEXT NOT NULL, keywords TEXT NOT NULL, pinned INTEGER NOT NULL, enabled INTEGER NOT NULL, sourceMessageId INTEGER, updatedAt INTEGER NOT NULL, PRIMARY KEY(id), FOREIGN KEY(plotId, characterId) REFERENCES plots(id, characterId) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_memory_notes_plotId_characterId ON memory_notes(plotId, characterId)")
+                db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS message_search USING FTS4(terms TEXT NOT NULL)")
+                // Original messages are indexed lazily, in cancellable batches, by MemoryRecall.
+            }
+        }
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE characters ADD COLUMN details TEXT NOT NULL DEFAULT ''")

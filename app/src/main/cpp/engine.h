@@ -18,7 +18,7 @@ public:
     void load(const std::string &path, int contextSize, int threads, const Progress &report = {});
     void unload();
     int count(const std::vector<Turn> &turns);
-    std::string generate(const std::vector<Turn> &turns, float temperature, int maxTokens, const Progress &report = {});
+    std::string generate(const std::vector<Turn> &turns, float temperature, int maxTokens, const Progress &report = {}, uint32_t seed = LLAMA_DEFAULT_SEED);
 private:
     std::atomic<bool> cancelled{false};
     llama_model *model = nullptr;

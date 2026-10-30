@@ -52,6 +52,8 @@ internal fun PlotEditor(original: PlotEntity?, character: CharacterEntity, lore:
     var title by rememberSaveable(base.id) { mutableStateOf(base.title) }
     var setup by rememberSaveable(base.id) { mutableStateOf(base.setup) }
     var greeting by rememberSaveable(base.id) { mutableStateOf(base.greeting) }
+    var replyStyle by rememberSaveable(base.id) { mutableStateOf(base.replyStyle) }
+    var replyTokens by rememberSaveable(base.id) { mutableIntStateOf(base.replyTokens) }
     var selected by rememberSaveable(base.id) { mutableStateOf(arrayListOf<String>()) }
     var loaded by rememberSaveable(base.id) { mutableStateOf(original == null) }
     var loadError by remember { mutableStateOf<String?>(null) }
@@ -70,6 +72,18 @@ internal fun PlotEditor(original: PlotEntity?, character: CharacterEntity, lore:
             OutlinedTextField(setup, { if (it.length <= 6000) setup = it }, label = { Text("あらすじ・舞台・開始状況・目標") },
                 minLines = 5, modifier = Modifier.fillMaxWidth(), placeholder = { Text("どこで、どんな関係から始める？ 大切にしたい物語の設定を書いてください。") })
             OutlinedTextField(greeting, { if (it.length <= 2000) greeting = it }, label = { Text("最初の挨拶（このプロットの作成時に使用）") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+            Text("返信の書き方", fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilterChip(replyStyle == "roleplay", { replyStyle = "roleplay" }, label = { Text("ロールプレイ") }, enabled = !busy)
+                FilterChip(replyStyle == "novel", { replyStyle = "novel" }, label = { Text("小説") }, enabled = !busy)
+            }
+            Text("返信の長さの上限", fontWeight = FontWeight.SemiBold)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(0 to "標準", 128 to "短め", 256 to "通常", 512 to "長め", 768 to "最長").forEach { (tokens, label) ->
+                    FilterChip(replyTokens == tokens, { replyTokens = tokens }, label = { Text(label) }, enabled = !busy)
+                }
+            }
+            Text("長い返信ほど生成に時間がかかり、一度に参照できる会話・記憶が少なくなります。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("このプロットで使うロア", fontWeight = FontWeight.SemiBold)
             if (!loaded && loadError == null) LinearProgressIndicator(Modifier.fillMaxWidth())
             loadError?.let { Text(it, color = MaterialTheme.colorScheme.error); TextButton({ attempt++ }) { Text("読み直す") } }
@@ -89,7 +103,7 @@ internal fun PlotEditor(original: PlotEntity?, character: CharacterEntity, lore:
                 if (!canDelete) Text("最後のプロットです。削除するには先に別のプロットを作成してください。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        Button({ onSave(base.copy(title = title.trim(), setup = setup.trim(), greeting = greeting.trim()), selected.toSet()) },
+        Button({ onSave(base.copy(title = title.trim(), setup = setup.trim(), greeting = greeting.trim(), replyStyle = replyStyle, replyTokens = replyTokens), selected.toSet()) },
             enabled = !busy && loaded && title.isNotBlank(), modifier = Modifier.fillMaxWidth().padding(top = 14.dp)) { Text("保存する") }
     }
     if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false }, title = { Text("プロットを削除しますか？") },

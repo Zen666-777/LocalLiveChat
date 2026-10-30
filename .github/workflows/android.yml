@@ -4,19 +4,24 @@ on:
   workflow_dispatch:
   push:
     branches: [main, 'codex/mel-chat-mvp']
-    paths: ['app/**', 'config/**', 'gradle/**', '*.gradle.kts', 'gradle.properties', 'gradlew', '.github/workflows/android.yml']
+    paths: ['app/**', 'config/**', 'scripts/render-evaluation.py', 'gradle/**', '*.gradle.kts', 'gradle.properties', 'gradlew', '.github/workflows/android.yml']
   pull_request:
-    paths: ['app/**', 'config/**', 'gradle/**', '*.gradle.kts', 'gradle.properties', 'gradlew', '.github/workflows/android.yml']
+    paths: ['app/**', 'config/**', 'scripts/render-evaluation.py', 'gradle/**', '*.gradle.kts', 'gradle.properties', 'gradlew', '.github/workflows/android.yml']
 
 permissions:
   contents: read
 
 jobs:
   native-smoke:
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: MEL-Chat-evaluation-prompts
+          path: /tmp/mel-evaluation
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -24,7 +29,7 @@ jobs:
       - name: Compile the actual local inference engine
         run: |
           cmake -S app/src/main/cpp -B /tmp/mel-native -DCMAKE_BUILD_TYPE=Release
-          cmake --build /tmp/mel-native --target mel-smoke mel_llm -j 2
+          cmake --build /tmp/mel-native --target mel-smoke mel_llm mel-eval -j 2
       - name: Verify and run the recommended GGUF with no API key
         run: |
           curl --fail --location --retry 3 --output /tmp/mel-model.gguf 'https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/18727206c51467496bfba014368bd0a30e97f411/Qwen3-4B-Instruct-2507-Q4_K_M.gguf'
@@ -33,6 +38,17 @@ jobs:
           mkdir -p /tmp/mel-jni-classes
           javac -encoding UTF-8 -d /tmp/mel-jni-classes app/src/main/cpp/jni-smoke/jp/mel/chat/local/LlamaBridge.java
           java -Djava.library.path=/tmp/mel-native -cp /tmp/mel-jni-classes jp.mel.chat.local.LlamaBridge /tmp/mel-model.gguf
+      - name: Generate actual baseline replies for human quality review
+        run: |
+          /tmp/mel-native/mel-eval /tmp/mel-model.gguf /tmp/mel-evaluation/requests.jsonl /tmp/mel-evaluation/responses.jsonl
+          python3 scripts/render-evaluation.py /tmp/mel-evaluation/requests.jsonl /tmp/mel-evaluation/responses.jsonl /tmp/mel-evaluation/BASELINE.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: MEL-Chat-quality-baseline
+          path: /tmp/mel-evaluation/
+          if-no-files-found: error
+          retention-days: 30
 
   build:
     runs-on: ubuntu-latest
@@ -98,6 +114,13 @@ jobs:
             exit 1
           fi
           echo "Verified fixed signing certificate SHA-256: $actual"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MEL-Chat-evaluation-prompts
+          path: app/build/evaluation/testDebugUnitTest/requests.jsonl
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Name APK and checksum
         run: |

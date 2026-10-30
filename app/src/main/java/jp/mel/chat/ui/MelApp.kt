@@ -66,6 +66,8 @@ fun MelApp(vm: ChatViewModel) {
     val loreSelection by vm.plotLoreSelection.collectAsStateWithLifecycle()
     val messages by vm.messages.collectAsStateWithLifecycle()
     val memory by vm.memory.collectAsStateWithLifecycle()
+    val memoryNotes by vm.memoryNotes.collectAsStateWithLifecycle()
+    val recallTrace by vm.recallTrace.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val hasKey by vm.hasKey.collectAsStateWithLifecycle()
@@ -83,7 +85,7 @@ fun MelApp(vm: ChatViewModel) {
     var showEditor by rememberSaveable { mutableStateOf(false) }
     var editingCharacterId by rememberSaveable { mutableStateOf<String?>(null) }
     val editing = characters.find { it.id == editingCharacterId }
-    var showMemory by remember { mutableStateOf(false) }
+    var showMemory by rememberSaveable { mutableStateOf(false) }
     var showModel by remember { mutableStateOf(false) }
     var showPlots by rememberSaveable { mutableStateOf(false) }
     var showPlotEditor by rememberSaveable { mutableStateOf(false) }
@@ -148,9 +150,10 @@ fun MelApp(vm: ChatViewModel) {
         if (showEditor && (editingCharacterId == null || editing != null)) CharacterEditor(editing, busy, models, loadingModels, vm::refreshModels, offline,
             onSave = { vm.save(it) { showEditor = false; showChat = true } },
             onDelete = { id -> vm.delete(id) { showEditor = false; showChat = false } }, onDismiss = { showEditor = false })
-        if (showMemory && plot != null) MemoryDialog(plot.id, memory?.takeIf { it.plotId == plot.id }, busy, offline,
-            onSave = { vm.saveMemory(plot.id, it) { showMemory = false } },
-            onSummarize = { vm.summarize(plot.id) }, onDismiss = { showMemory = false })
+        if (showMemory && plot != null) MemoryNotebook(plot, memory?.takeIf { it.plotId == plot.id },
+            memoryNotes.filter { it.plotId == plot.id && it.characterId == plot.characterId }, recallTrace?.takeIf { it.plotId == plot.id }, busy, offline,
+            onSaveSummary = { text, done -> vm.saveMemory(plot.id, text, done) }, onSummarize = { vm.summarize(plot.id) },
+            onSaveNote = vm::saveMemoryNote, onDeleteNote = vm::deleteMemoryNote, onSearch = vm::searchMemory, onDismiss = { showMemory = false })
         if (showPlots && character != null) PlotPicker(plots.filter { it.characterId == character.id }, selectedPlot, busy,
             onPick = { vm.selectPlot(it); showPlots = false }, onNew = { editingPlotId = null; showPlots = false; showPlotEditor = true },
             onEdit = { editingPlotId = it.id; showPlots = false; showPlotEditor = true }, onDismiss = { showPlots = false })
@@ -520,20 +523,5 @@ private fun ModelPicker(models: List<RemoteModel>, loading: Boolean, onRefresh: 
             }
             if (filtered.isEmpty() && !loading) item { Text("一覧がない場合は、IDを直接入力できます。", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(16.dp)) }
         }
-    }
-}
-
-@Composable
-private fun MemoryDialog(id: String, memory: MemoryEntity?, busy: Boolean, offline: Boolean, onSave: (String) -> Unit, onSummarize: () -> Unit, onDismiss: () -> Unit) {
-    var text by remember(id, memory?.updatedAt) { mutableStateOf(memory?.summary.orEmpty()) }
-    Sheet("このプロットの長期記憶", onDismiss) {
-        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("このプロットの会話が24件を超えるか、文脈上限に近づくと自動で要約します。通常は直近8件、端末モデルで文脈が足りない場合は2件まで残してまとめます。元の履歴も保存します。", color = Muted, fontSize = 12.sp)
-            Text(if (memory == null) "まだ要約はありません" else "更新: " + SimpleDateFormat("M/d HH:mm", Locale.JAPAN).format(Date(memory.updatedAt)), color = Mint, fontSize = 11.sp)
-            OutlinedTextField(text, { if (it.length <= 3000) text = it }, label = { Text("覚えておいてほしいこと") }, minLines = 7,
-                supportingText = { Text("${text.length} / 3000  ·  編集内容は次の自動要約に統合します") }, enabled = !busy, modifier = Modifier.fillMaxWidth())
-            OutlinedButton(onSummarize, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text(if (offline) "端末内で今すぐ要約する" else "今すぐ要約する（APIを使用）") }
-        }
-        Button(onClick = { onSave(text) }, enabled = !busy, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text("記憶を保存") }
     }
 }

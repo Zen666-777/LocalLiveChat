@@ -15,8 +15,8 @@ android {
         applicationId = "jp.mel.chat"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.2.0-stories"
+        versionCode = 6
+        versionName = "1.3.0-memory"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_shared", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON") } }
@@ -42,6 +42,11 @@ android {
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }
+tasks.withType<Test>().configureEach {
+    val evaluationDirectory = layout.buildDirectory.dir("evaluation/$name")
+    systemProperty("melEvaluationDirectory", evaluationDirectory.get().asFile.absolutePath)
+    outputs.dir(evaluationDirectory).withPropertyName("melQualityEvaluation")
+}
 // OneDrive can turn an old binary-results directory into a read-only reparse
 // point. Local builds use a fresh path; CI keeps Gradle's standard output.
 val localTestRun = providers.gradleProperty("melLocalTestRun")
