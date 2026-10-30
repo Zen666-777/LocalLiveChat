@@ -15,8 +15,8 @@ android {
         applicationId = "jp.mel.chat"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.1.1-local-rp"
+        versionCode = 4
+        versionName = "1.1.2-local-rp"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_shared", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON") } }

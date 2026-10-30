@@ -1,6 +1,7 @@
 #include "engine.h"
 #include <jni.h>
 #include <exception>
+#include <stdexcept>
 
 namespace {
 mel::Engine engine;
@@ -35,6 +36,7 @@ std::vector<mel::Turn> turns(JNIEnv *env, jobjectArray roles, jobjectArray conte
     return result;
 }
 void error(JNIEnv *env, const std::exception &e) {
+    if (env->ExceptionCheck()) return;
     // ThrowNew uses modified UTF-8; construct the exception with a proper UTF-8 String.
     auto cls = env->FindClass("java/lang/IllegalStateException");
     auto constructor = env->GetMethodID(cls, "<init>", "(Ljava/lang/String;)V");
@@ -43,16 +45,28 @@ void error(JNIEnv *env, const std::exception &e) {
     env->Throw(exception);
     env->DeleteLocalRef(message); env->DeleteLocalRef(exception); env->DeleteLocalRef(cls);
 }
+mel::Progress reporter(JNIEnv *env, jobject callback) {
+    const auto cls = env->GetObjectClass(callback);
+    const auto update = env->GetMethodID(cls, "update", "(IIILjava/lang/String;)V");
+    env->DeleteLocalRef(cls);
+    if (!update || env->ExceptionCheck()) throw std::runtime_error("進捗の表示を開始できません。");
+    return [env, callback, update](int stage, int current, int total, const std::string &text) {
+        const auto value = string(env, text);
+        env->CallVoidMethod(callback, update, stage, current, total, value);
+        env->DeleteLocalRef(value);
+        if (env->ExceptionCheck()) throw std::runtime_error("進捗の表示に失敗しました。");
+    };
+}
 }
 extern "C" JNIEXPORT void JNICALL Java_jp_mel_chat_local_LlamaBridge_begin(JNIEnv *, jobject) { engine.begin(); }
 extern "C" JNIEXPORT void JNICALL Java_jp_mel_chat_local_LlamaBridge_cancel(JNIEnv *, jobject) { engine.cancel(); }
 extern "C" JNIEXPORT void JNICALL Java_jp_mel_chat_local_LlamaBridge_unload(JNIEnv *, jobject) { engine.unload(); }
-extern "C" JNIEXPORT void JNICALL Java_jp_mel_chat_local_LlamaBridge_load(JNIEnv *env, jobject, jstring path, jint context, jint threads) {
-    try { engine.load(utf8(env, path), context, threads); } catch (const std::exception &e) { error(env, e); }
+extern "C" JNIEXPORT void JNICALL Java_jp_mel_chat_local_LlamaBridge_load(JNIEnv *env, jobject, jstring path, jint context, jint threads, jobject callback) {
+    try { engine.load(utf8(env, path), context, threads, reporter(env, callback)); } catch (const std::exception &e) { error(env, e); }
 }
 extern "C" JNIEXPORT jint JNICALL Java_jp_mel_chat_local_LlamaBridge_count(JNIEnv *env, jobject, jobjectArray roles, jobjectArray contents) {
     try { return engine.count(turns(env, roles, contents)); } catch (const std::exception &e) { error(env, e); return 0; }
 }
-extern "C" JNIEXPORT jstring JNICALL Java_jp_mel_chat_local_LlamaBridge_generate(JNIEnv *env, jobject, jobjectArray roles, jobjectArray contents, jfloat temperature, jint limit) {
-    try { return string(env, engine.generate(turns(env, roles, contents), temperature, limit)); } catch (const std::exception &e) { error(env, e); return nullptr; }
+extern "C" JNIEXPORT jstring JNICALL Java_jp_mel_chat_local_LlamaBridge_generate(JNIEnv *env, jobject, jobjectArray roles, jobjectArray contents, jfloat temperature, jint limit, jobject callback) {
+    try { return string(env, engine.generate(turns(env, roles, contents), temperature, limit, reporter(env, callback))); } catch (const std::exception &e) { error(env, e); return nullptr; }
 }

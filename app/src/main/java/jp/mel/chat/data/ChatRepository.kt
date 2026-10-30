@@ -81,7 +81,7 @@ class ChatRepository(private val database: ChatDatabase, private val service: Ch
     }
 
     private fun inputBudget(character: CharacterEntity): Int =
-        minOf(character.contextTokens, service.contextLimit ?: character.contextTokens) - service.outputLimit - if (service.local) 128 else 512
+        minOf(character.contextTokens, service.contextLimit ?: character.contextTokens) - maxOf(service.outputLimit, service.summaryLimit) - if (service.local) 128 else 512
 
     private fun prompt(character: CharacterEntity, memory: MemoryEntity?, messages: List<MessageEntity>) =
         ConversationPolicy.prompt(character, memory, messages, roleplay = service.local)

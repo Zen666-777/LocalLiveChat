@@ -17,15 +17,22 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: Compile the actual local inference engine
         run: |
           cmake -S app/src/main/cpp -B /tmp/mel-native -DCMAKE_BUILD_TYPE=Release
-          cmake --build /tmp/mel-native --target mel-smoke -j 2
+          cmake --build /tmp/mel-native --target mel-smoke mel_llm -j 2
       - name: Verify and run the recommended GGUF with no API key
         run: |
           curl --fail --location --retry 3 --output /tmp/mel-model.gguf 'https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/18727206c51467496bfba014368bd0a30e97f411/Qwen3-4B-Instruct-2507-Q4_K_M.gguf'
           echo '3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597  /tmp/mel-model.gguf' | sha256sum --check
           /tmp/mel-native/mel-smoke /tmp/mel-model.gguf
+          mkdir -p /tmp/mel-jni-classes
+          javac -encoding UTF-8 -d /tmp/mel-jni-classes app/src/main/cpp/jni-smoke/jp/mel/chat/local/LlamaBridge.java
+          java -Djava.library.path=/tmp/mel-native -cp /tmp/mel-jni-classes jp.mel.chat.local.LlamaBridge /tmp/mel-model.gguf
 
   build:
     runs-on: ubuntu-latest

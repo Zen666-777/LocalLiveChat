@@ -4,54 +4,33 @@ import android.app.ActivityManager
 import android.content.Context
 import jp.mel.chat.network.*
 import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import java.util.concurrent.Executors
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.flow.MutableStateFlow
+
+internal fun interface NativeProgress {
+    fun update(stage: Int, current: Int, total: Int, text: String)
+}
+data class LocalProgress(val stage: String = "", val current: Int = 0, val total: Int = 0, val text: String = "")
 
 internal object LlamaBridge {
     init { System.loadLibrary("mel_llm") }
     external fun begin()
     external fun cancel()
-    external fun load(path: String, context: Int, threads: Int)
+    external fun load(path: String, context: Int, threads: Int, progress: NativeProgress)
     external fun unload()
     external fun count(roles: Array<String>, contents: Array<String>): Int
-    external fun generate(roles: Array<String>, contents: Array<String>, temperature: Float, limit: Int): String
+    external fun generate(roles: Array<String>, contents: Array<String>, temperature: Float, limit: Int, progress: NativeProgress): String
 }
 
 class LocalChatService(private val context: Context, private val store: LocalModelStore) : ChatService {
-    private val worker = Executors.newSingleThreadExecutor { Thread(it, "MEL-local-LLM") }
-    private val mutex = Mutex()
+    private val runner = NativeTaskRunner({ LlamaBridge.begin() }, { LlamaBridge.cancel() })
+    val progress = MutableStateFlow(LocalProgress())
     private var loaded: String? = null
     override val local = true
     override val contextLimit = 4096
-    override val outputLimit = 512
+    override val outputLimit = 256
     override val summaryLimit = 512
     override fun responseModel(requested: String) = "local/${store.active()?.sha256?.take(12) ?: "unloaded"}"
     override suspend fun models() = emptyList<RemoteModel>() // No network catalog in offline mode.
-
-    private suspend fun <T> native(action: () -> T): T = mutex.withLock {
-        val finished = CompletableDeferred<Unit>()
-        LlamaBridge.begin()
-        try {
-            suspendCancellableCoroutine { continuation ->
-                continuation.invokeOnCancellation { LlamaBridge.cancel() }
-                worker.execute {
-                    try {
-                        if (continuation.isActive) {
-                            val value = action()
-                            continuation.resume(value)
-                        }
-                    } catch (e: Exception) { if (continuation.isActive) continuation.resumeWithException(e) }
-                    finally { finished.complete(Unit) }
-                }
-            }
-        } finally {
-            // Do not release the mutex until aborted native decoding has finished.
-            withContext(NonCancellable) { finished.await() }
-        }
-    }
 
     private fun ensureLoaded() {
         val model = store.active() ?: error("設定からローカルモデルを取得・選択してください。")
@@ -60,26 +39,35 @@ class LocalChatService(private val context: Context, private val store: LocalMod
         if (loaded == model.sha256) return
         LlamaBridge.unload()
         loaded = null
+        progress.value = LocalProgress("空きメモリを確認中")
         val memory = ActivityManager.MemoryInfo()
         context.getSystemService(ActivityManager::class.java).getMemoryInfo(memory)
         check(!memory.lowMemory && memory.availMem > model.bytes + 768L * 1024 * 1024) {
-            "モデル用の空きメモリが足りません。他のアプリを閉じるか、小さいGGUFを選んでください。"
+            "モデル用の空きメモリが足りません（空き約${memory.availMem / (1024 * 1024)}MB、目安約${(model.bytes + 768L * 1024 * 1024) / (1024 * 1024)}MB必要）。他のアプリを閉じるか、小さいモデルを選んでください。"
         }
-        LlamaBridge.load(file.absolutePath, contextLimit, Runtime.getRuntime().availableProcessors().coerceIn(1, 4))
+        progress.value = LocalProgress("モデルを読み込み中")
+        LlamaBridge.load(file.absolutePath, contextLimit, Runtime.getRuntime().availableProcessors().coerceIn(1, 4),
+            NativeProgress { _, current, total, _ -> progress.value = LocalProgress("モデルを読み込み中", current, total) })
         loaded = model.sha256
     }
 
-    override suspend fun tokenCount(messages: List<Turn>): Int = native {
+    override suspend fun tokenCount(messages: List<Turn>): Int = runner.run {
         ensureLoaded()
+        progress.value = LocalProgress("会話の長さを確認中")
         val turns = mergeSystem(messages)
         LlamaBridge.count(turns.map { it.role }.toTypedArray(), turns.map { it.content }.toTypedArray())
     }
-    override suspend fun complete(key: String, model: String, messages: List<Turn>, temperature: Float, maxTokens: Int): String = native {
+    override suspend fun complete(key: String, model: String, messages: List<Turn>, temperature: Float, maxTokens: Int): String = runner.run {
         ensureLoaded()
         val turns = mergeSystem(messages)
-        LlamaBridge.generate(turns.map { it.role }.toTypedArray(), turns.map { it.content }.toTypedArray(), temperature, maxTokens.coerceAtMost(768)).trim()
+        val summary = messages.firstOrNull()?.content?.startsWith("会話の長期記憶を") == true
+        LlamaBridge.generate(turns.map { it.role }.toTypedArray(), turns.map { it.content }.toTypedArray(), temperature, maxTokens.coerceAtMost(768),
+            NativeProgress { stage, current, total, text ->
+                progress.value = LocalProgress(if (summary) "長期記憶を要約中" else if (stage == 1) "会話を読み取り中" else "返信を生成中",
+                    current, total, if (summary) "" else text)
+            }).trim().also { check(it.isNotBlank()) { "モデルの応答が空でした。再試行するか、別のモデルを選んでください。" } }
     }
-    suspend fun release() = native { LlamaBridge.unload(); loaded = null }
+    suspend fun release() = runner.run { LlamaBridge.unload(); loaded = null; progress.value = LocalProgress() }
 }
 
 /** Models such as Gemma accept one leading system block rather than successive system turns. */

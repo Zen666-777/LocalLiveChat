@@ -39,6 +39,9 @@ import jp.mel.chat.data.MessageEntity
 import jp.mel.chat.network.RemoteModel
 import jp.mel.chat.local.ModelState
 import jp.mel.chat.local.LocalModelStore
+import jp.mel.chat.local.LocalProgress
+import android.os.SystemClock
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -64,6 +67,8 @@ fun MelApp(vm: ChatViewModel) {
     val loadingModels by vm.loadingModels.collectAsStateWithLifecycle()
     val offline by vm.offline.collectAsStateWithLifecycle()
     val deviceModels by vm.deviceModels.collectAsStateWithLifecycle()
+    val replyState by vm.replyState.collectAsStateWithLifecycle()
+    val localProgress by vm.localProgress.collectAsStateWithLifecycle()
     val ready = if (offline) deviceModels.active != null else hasKey
     val character = characters.find { it.id == selected }
     var showChat by rememberSaveable { mutableStateOf(false) }
@@ -73,7 +78,10 @@ fun MelApp(vm: ChatViewModel) {
     var showMemory by remember { mutableStateOf(false) }
     var showModel by remember { mutableStateOf(false) }
     val snackbars = remember { SnackbarHostState() }
-    LaunchedEffect(notice) { notice?.let { vm.notice.value = null; snackbars.showSnackbar(it) } }
+    LaunchedEffect(notice) { notice?.let {
+        snackbars.showSnackbar(it)
+        if (vm.notice.value == it) vm.notice.value = null
+    } }
 
     MaterialTheme(colorScheme = MelColors) {
         Scaffold(containerColor = Ink, snackbarHost = { SnackbarHost(snackbars) },
@@ -106,6 +114,7 @@ fun MelApp(vm: ChatViewModel) {
                                 Text("キャラクターを選んで、物語をはじめよう。", color = Muted)
                             } else ChatPane(character, messages.filter { it.characterId == character.id },
                                 memory?.takeIf { it.characterId == character.id }, busy, ready, wide, offline, deviceModels.active?.name,
+                                replyState.takeIf { it.characterId == character.id }, localProgress,
                                 onBack = { showChat = false }, onEdit = { editing = character; showEditor = true },
                                 onMemory = { showMemory = true }, onModel = { if (offline) showSettings = true else showModel = true }, onSettings = { showSettings = true },
                                 onSend = { text, accepted -> vm.send(character.id, text, accepted) },
@@ -182,7 +191,8 @@ private fun Avatar(name: String, size: Int) {
 
 @Composable
 private fun ChatPane(character: CharacterEntity, messages: List<MessageEntity>, memory: MemoryEntity?, busy: Boolean,
-    hasKey: Boolean, wide: Boolean, offline: Boolean, localModelName: String?, onBack: () -> Unit, onEdit: () -> Unit, onMemory: () -> Unit,
+    hasKey: Boolean, wide: Boolean, offline: Boolean, localModelName: String?, replyState: ReplyState?, progress: LocalProgress,
+    onBack: () -> Unit, onEdit: () -> Unit, onMemory: () -> Unit,
     onModel: () -> Unit, onSettings: () -> Unit, onSend: (String, () -> Unit) -> Unit,
     onEditPending: (String, () -> Unit) -> Unit, onRetry: () -> Unit, onStop: () -> Unit) {
     var draft by rememberSaveable(character.id) { mutableStateOf("") }
@@ -190,7 +200,16 @@ private fun ChatPane(character: CharacterEntity, messages: List<MessageEntity>, 
     var editingPending by remember(character.id) { mutableStateOf(false) }
     var pendingText by remember(character.id) { mutableStateOf("") }
     val scroll = rememberLazyListState()
-    LaunchedEffect(character.id, messages.size, busy) { if (messages.isNotEmpty()) scroll.animateScrollToItem(messages.size - 1) }
+    var seconds by remember { mutableLongStateOf(0) }
+    LaunchedEffect(replyState?.startedAt, replyState?.running) {
+        while (replyState?.running == true) {
+            seconds = ((SystemClock.elapsedRealtime() - replyState.startedAt) / 1000).coerceAtLeast(0)
+            delay(1000)
+        }
+    }
+    LaunchedEffect(character.id, messages.size, busy, progress.text.isNotBlank(), progress.text.length / 80) {
+        if (messages.isNotEmpty()) scroll.animateScrollToItem(if (busy) messages.size else messages.lastIndex)
+    }
     Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF181321), Ink, Ink)))) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             if (!wide) IconButton(onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "キャラクター一覧") }
@@ -218,9 +237,29 @@ private fun ChatPane(character: CharacterEntity, messages: List<MessageEntity>, 
                 }
             }
             if (busy) item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(14.dp), color = Lavender, strokeWidth = 2.dp)
-                    Text("会話・記憶を処理しています…", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(start = 10.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (replyState?.running == true && offline && progress.text.isNotBlank()) {
+                        Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFF20202D)) {
+                            SelectionContainer { Text(progress.text, fontSize = 15.sp, lineHeight = 24.sp, modifier = Modifier.padding(16.dp)) }
+                        }
+                        Text("生成中の返信（完了時に保存します）", color = Muted, fontSize = 10.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(14.dp), color = Lavender, strokeWidth = 2.dp)
+                        val label = if (replyState?.running == true) {
+                            (if (offline) replyState.stage else "モデルの返信を待っています") +
+                                (if (offline && progress.total > 0) " ${progress.current}/${progress.total}" else "") + " · ${seconds}秒"
+                        } else "処理しています…"
+                        Text(label, color = Muted, fontSize = 11.sp, modifier = Modifier.padding(start = 10.dp))
+                    }
+                }
+            }
+        }
+        replyState?.error?.let { error ->
+            Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("返信できませんでした", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    SelectionContainer { Text(error, fontSize = 12.sp, modifier = Modifier.padding(top = 5.dp)) }
                 }
             }
         }
@@ -344,7 +383,7 @@ private fun SettingsDialog(hasKey: Boolean, busy: Boolean, offline: Boolean, dev
                     }
                 }
                 TextButton(vm::releaseModel, enabled = !busy && deviceModels.active != null) { Text("モデルのメモリを解放") }
-                Text("文脈は4096トークン、返信は最大512トークン。設定や長い投稿が上限を超えた場合は、履歴を残して停止します。アプリを閉じると生成は中断することがあります。", color = Muted, fontSize = 11.sp)
+                Text("文脈は4096トークン、返信は最大256トークン。返信は生成できた文字から表示します。設定や長い投稿が上限を超えた場合は履歴を残して停止します。アプリを閉じると生成が中断することがあります。", color = Muted, fontSize = 11.sp)
             } else {
             Text("OpenRouter API", color = Lavender, fontSize = 13.sp)
             Text("${if (hasKey) "✓ キーは保存済みです。変更する場合のみ入力してください。" else "OpenRouterで取得したAPIキーを登録してください。"}\nキーはAndroid Keystoreで暗号化し、この端末に保存します。", color = Muted, fontSize = 12.sp)

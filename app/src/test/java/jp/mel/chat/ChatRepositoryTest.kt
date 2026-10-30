@@ -137,7 +137,7 @@ class ChatRepositoryTest {
         var localMode = false
         override val local get() = localMode
         override val contextLimit get() = if (local) 4096 else null
-        override val outputLimit get() = if (local) 512 else 1024
+        override val outputLimit get() = if (local) 256 else 1024
         override val summaryLimit get() = if (local) 512 else 768
         override fun responseModel(requested: String) = if (local) "local/test" else requested
         override suspend fun tokenCount(messages: List<Turn>): Int = if (local) 400 + messages.sumOf { it.content.length } else ConversationPolicy.cost(messages)
@@ -146,6 +146,7 @@ class ChatRepositoryTest {
         var lastModel = ""
         var lastTurns = emptyList<Turn>()
         override suspend fun complete(key: String, model: String, messages: List<Turn>, temperature: Float, maxTokens: Int): String {
+            if (local) check(tokenCount(messages) + maxTokens + 8 <= 4096) { "Native context overflow" }
             if (fail || (failSummary && maxTokens == 768)) throw ApiException("offline")
             lastModel = model; lastTurns = messages
             return "saved reply or summary"

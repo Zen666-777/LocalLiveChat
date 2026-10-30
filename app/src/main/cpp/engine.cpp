@@ -12,16 +12,27 @@ void require(bool condition, const char *message) { if (!condition) throw std::r
 }
 Engine::~Engine() { unload(); }
 bool Engine::abort(void *data) { return static_cast<Engine *>(data)->cancelled.load(); }
-bool Engine::progress(float, void *data) { return !abort(data); }
+bool Engine::progress(float value, void *data) {
+    auto self = static_cast<Engine *>(data);
+    const int percent = static_cast<int>(value * 100);
+    if (self->loadingProgress && percent != self->loadingPercent) {
+        self->loadingPercent = percent;
+        self->loadingProgress(0, percent, 100, "");
+    }
+    return !abort(data);
+}
 void Engine::check() { require(!cancelled.load(), "処理を停止しました。"); }
 void Engine::unload() {
     if (context) { llama_free(context); context = nullptr; }
     if (model) { llama_model_free(model); model = nullptr; }
 }
-void Engine::load(const std::string &path, int contextSize, int threads) {
+void Engine::load(const std::string &path, int contextSize, int threads, const Progress &report) {
     check();
     std::call_once(initialized, [] { llama_log_set(silentLog, nullptr); llama_backend_init(); });
     unload();
+    loadingProgress = report;
+    loadingPercent = -1;
+    struct ClearProgress { Progress &value; ~ClearProgress() { value = {}; } } clearProgress{loadingProgress};
     auto params = llama_model_default_params();
     params.n_gpu_layers = 0;
     params.load_mode = LLAMA_LOAD_MODE_MMAP;
@@ -65,7 +76,7 @@ std::vector<llama_token> Engine::tokenize(const std::vector<Turn> &turns) {
     return tokens;
 }
 int Engine::count(const std::vector<Turn> &turns) { return tokenize(turns).size(); }
-std::string Engine::generate(const std::vector<Turn> &turns, float temperature, int maxTokens) {
+std::string Engine::generate(const std::vector<Turn> &turns, float temperature, int maxTokens, const Progress &report) {
     auto tokens = tokenize(turns);
     maxTokens = std::clamp(maxTokens, 1, 768);
     require(tokens.size() + maxTokens + 8 <= llama_n_ctx(context), "会話がモデルの上限を超えました。設定や記憶を短くしてください。");
@@ -73,12 +84,14 @@ std::string Engine::generate(const std::vector<Turn> &turns, float temperature, 
     require(memory, "このモデルのメモリ形式は未対応です。");
     llama_memory_clear(memory, true);
     struct Clear { llama_memory_t memory; ~Clear() { llama_memory_clear(memory, true); } } clear{memory};
+    if (report) report(1, 0, tokens.size(), "");
     for (size_t offset = 0; offset < tokens.size(); offset += 256) {
         check();
         int count = std::min<size_t>(256, tokens.size() - offset);
         int result = llama_decode(context, llama_batch_get_one(tokens.data() + offset, count));
         check();
         require(result == 0, "会話の読み込みに失敗しました。空きメモリを確認してください。");
+        if (report) report(1, offset + count, tokens.size(), "");
     }
     std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)> sampler(
         llama_sampler_chain_init(llama_sampler_chain_default_params()), llama_sampler_free);
@@ -93,6 +106,7 @@ std::string Engine::generate(const std::vector<Turn> &turns, float temperature, 
         llama_sampler_chain_add(sampler.get(), llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
     }
     std::string output;
+    if (report) report(2, 0, maxTokens, "");
     for (int i = 0; i < maxTokens; ++i) {
         check();
         llama_token token = llama_sampler_sample(sampler.get(), context, -1);
@@ -101,12 +115,25 @@ std::string Engine::generate(const std::vector<Turn> &turns, float temperature, 
         int size = llama_token_to_piece(vocab, token, piece.data(), piece.size(), 0, false);
         if (size < 0) { piece.resize(-size); size = llama_token_to_piece(vocab, token, piece.data(), piece.size(), 0, false); }
         if (size > 0) output.append(piece.data(), size);
+        if (report) report(2, i + 1, maxTokens, completeUtf8(output));
         if (i + 1 < maxTokens) {
             require(llama_decode(context, llama_batch_get_one(&token, 1)) == 0 || cancelled.load(), "返信の生成に失敗しました。");
         }
     }
     check();
-    require(!output.empty(), "モデルの応答が空です。別のモデルや設定で再試行してください。");
-    return output;
+    auto result = completeUtf8(output);
+    require(!result.empty(), "モデルの応答が空です。別のモデルや設定で再試行してください。");
+    return result;
+}
+
+// A token may end halfway through a Japanese character or emoji. Do not expose
+// that incomplete suffix as a replacement character in the streaming preview.
+std::string completeUtf8(const std::string &text) {
+    if (text.empty()) return text;
+    size_t start = text.size() - 1;
+    while (start > 0 && (static_cast<unsigned char>(text[start]) & 0xc0) == 0x80) --start;
+    const auto lead = static_cast<unsigned char>(text[start]);
+    const size_t width = (lead & 0xf8) == 0xf0 ? 4 : (lead & 0xf0) == 0xe0 ? 3 : (lead & 0xe0) == 0xc0 ? 2 : 1;
+    return text.substr(0, text.size() - start < width ? start : text.size());
 }
 }

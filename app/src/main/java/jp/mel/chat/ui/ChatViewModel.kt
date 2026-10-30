@@ -30,10 +30,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val hasKey = MutableStateFlow(false)
     val offline = app.backend.offline
     val deviceModels = app.deviceModels.state
+    private val replies = ReplyTracker(preferences)
+    val replyState = replies.state
+    val localProgress = app.device.progress
     private var work: Job? = null
     private val operations = Mutex()
 
     init {
+        viewModelScope.launch { localProgress.collect { replies.stage(it.stage) } }
         viewModelScope.launch {
             try { withContext(Dispatchers.IO) {
                 if (!preferences.getBoolean("initialized", false)) {
@@ -104,9 +108,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun send(id: String, text: String?, onAccepted: () -> Unit = {}) {
         if (busy.value) return
         perform {
-            val key = requireKey()
-            val warning = repository.send(id, text, key) { withContext(Dispatchers.Main) { onAccepted() } }
-            if (warning != null) notice.value = warning
+            localProgress.value = jp.mel.chat.local.LocalProgress()
+            replies.start(id)
+            try {
+                val key = requireKey()
+                val warning = repository.send(id, text, key) { withContext(Dispatchers.Main) { onAccepted() } }
+                replies.finish()
+                if (warning != null) notice.value = warning
+            } catch (e: CancellationException) {
+                replies.finish("返信の生成を停止しました。送信済みの投稿は再試行できます。")
+                throw e
+            } catch (e: Exception) {
+                replies.finish(e.message ?: "返信できませんでした。再試行してください。")
+                throw e
+            }
         }
     }
     fun cancel() { work?.cancel() }
