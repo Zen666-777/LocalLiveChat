@@ -8,17 +8,25 @@ import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-/** Owns one native worker. Cancellation must finish before another call resets its flag. */
+/** A stalled native worker must not hold the UI forever or have its abort flag reset. */
 internal class NativeTaskRunner(
     private val begin: () -> Unit,
     private val requestAbort: () -> Unit,
     private val worker: ExecutorService = Executors.newSingleThreadExecutor { Thread(it, "MEL-local-LLM") },
-    private val timeoutMs: Long = 180_000
+    private val timeoutMs: Long = 180_000,
+    private val cleanupWaitMs: Long = 2_000
 ) {
     private val mutex = Mutex()
+    // Guarded by mutex. A timed-out action may still be unwinding in C++.
+    private var previous: CompletableDeferred<Unit>? = null
     suspend fun <T> run(action: () -> T): T = mutex.withLock {
+        previous?.takeUnless { it.isCompleted }?.let { pending ->
+            val ready = withTimeoutOrNull(cleanupWaitMs) { pending.await(); true } ?: false
+            check(ready) { "前回の推論エンジンの停止処理が終わっていません。少し待って再試行してください。続く場合はAndroidのアプリ情報からMEL Chatを強制停止して開き直してください。保存済みの投稿は残っています。" }
+        }
         try { begin() } catch (failure: Throwable) { throw readableFailure(failure) }
         val finished = CompletableDeferred<Unit>()
+        previous = finished
         try {
             withTimeout(timeoutMs) {
                 suspendCancellableCoroutine { continuation ->
@@ -40,9 +48,11 @@ internal class NativeTaskRunner(
             }
         } catch (_: TimeoutCancellationException) {
             currentCoroutineContext().ensureActive()
-            error("端末での処理が3分を超えたため停止しました。他のアプリを閉じて再試行するか、小さいモデルを選んでください。投稿は保存されています。")
+            error("端末での処理が3分を超えたため返信を中断しました。少し待って再試行してください。停止処理が終わらない場合はAndroidのアプリ情報からMEL Chatを強制停止して開き直してください。投稿は保存されています。")
         } finally {
-            withContext(NonCancellable) { finished.await() }
+            // Cooperative native cancellation normally finishes immediately. If
+            // not, return control to the caller, retaining the barrier above.
+            withContext(NonCancellable) { withTimeoutOrNull(cleanupWaitMs) { finished.await() } }
         }
     }
 }

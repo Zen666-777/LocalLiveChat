@@ -42,6 +42,7 @@ jobs:
         run: |
           /tmp/mel-native/mel-eval /tmp/mel-model.gguf /tmp/mel-evaluation/requests.jsonl /tmp/mel-evaluation/responses.jsonl
           python3 scripts/render-evaluation.py /tmp/mel-evaluation/requests.jsonl /tmp/mel-evaluation/responses.jsonl /tmp/mel-evaluation/BASELINE.md
+          cat /tmp/mel-evaluation/BASELINE.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

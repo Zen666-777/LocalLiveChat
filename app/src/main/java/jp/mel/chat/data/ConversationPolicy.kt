@@ -22,7 +22,7 @@ object ConversationPolicy {
     fun prompt(character: CharacterEntity, memory: MemoryEntity?, messages: List<MessageEntity>, roleplay: Boolean = false,
         plot: PlotEntity? = null, lore: List<LoreEntryEntity> = emptyList(),
         notes: List<MemoryNoteEntity> = emptyList(), recalled: List<RecalledMessage> = emptyList()): List<Turn> = buildList {
-        add(Turn("system", "あなたは${character.name}。${character.subtitle}\n${character.persona}\n${character.details}\nユーザーの言語で自然に対話してください。"))
+        add(Turn("system", "あなたは${character.name}。${character.subtitle}\n${character.persona}\n${character.details}\nユーザーの言語で自然に対話してください。過去の出来事・名前・約束を尋ねられたら、提供された記録に基づいて答えてください。記録にない情報を覚えているふりで作らず、キャラの口調で自然に確かめてください。これから起こる創作の展開と、過去の事実の想起を区別してください。"))
         if (roleplay) add(Turn("system", "キャラクターとして物語の場面に参加してください。設定の口調、性格、関係性を一貫させ、台詞と必要な短い情景・仕草を自然な日本語で書いてください。ユーザー本人の発言、感情、行動を勝手に確定しないでください。現在の場面を引き継ぎ、同じ表現を繰り返さず、相手が返事できる余地を残してください。出力はキャラクターの返信本文のみ。設定の復唱、解説、JSON、思考過程は不要です。"))
         if (plot?.replyStyle == "novel") add(Turn("system", "日本語の小説の続きを書いてください。指定された視点・時制・人物の口調を維持し、台詞、心理、情景を場面に合わせて描写してください。直前の文章を言い換えて繰り返さず、場面を少し先へ進めてください。ユーザーが担当する人物の台詞・内心・選択は勝手に確定しないでください。本文だけを出力し、執筆の説明や最後の定型的な質問は不要です。"))
         plot?.let { add(Turn("system", "現在のプロット：${it.title}\n${it.setup}\nこのプロットの設定と会話の連続性を維持してください。別のプロットでの出来事は推測しないでください。")) }

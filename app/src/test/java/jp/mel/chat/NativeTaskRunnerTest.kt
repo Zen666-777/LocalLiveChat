@@ -6,6 +6,8 @@ import org.junit.Assert.*
 import org.junit.Test
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.CountDownLatch
 
 class NativeTaskRunnerTest {
     @Test fun nativeWorkerErrorsReachTheCallerInsteadOfLeavingItSuspended() = runBlocking {
@@ -57,5 +59,42 @@ class NativeTaskRunnerTest {
         val worker = Executors.newSingleThreadExecutor().apply { shutdown() }
         val runner = NativeTaskRunner({}, {}, worker)
         assertTrue(runCatching { runner.run { "never" } }.isFailure)
+    }
+    @Test fun unresponsiveNativeWorkerDoesNotHoldTimeoutErrorOrPermitAbortFlagReset() = runBlocking {
+        val worker = Executors.newSingleThreadExecutor()
+        val release = CountDownLatch(1)
+        val begins = AtomicInteger()
+        val cleaned = AtomicBoolean()
+        val entered = CompletableDeferred<Unit>()
+        try {
+            val runner = NativeTaskRunner({ begins.incrementAndGet() }, {}, worker, timeoutMs = 500, cleanupWaitMs = 30)
+            // Warm the executor/coroutine classes before the intentionally short
+            // timeout, so this exercises an entered native call, not JVM startup.
+            assertEquals("warm", runner.run { "warm" })
+            val failure = withTimeout(5000) { runCatching { runner.run { entered.complete(Unit); release.await(); cleaned.set(true); "late" } }.exceptionOrNull() }
+            assertTrue(failure!!.message!!.contains("3分"))
+            assertTrue(entered.isCompleted)
+            assertFalse(cleaned.get())
+            val blocked = runCatching { runner.run { error("must not run") } }.exceptionOrNull()
+            assertTrue(blocked!!.message!!.contains("停止処理"))
+            assertEquals(2, begins.get())
+            release.countDown()
+            withTimeout(2000) { while (!cleaned.get()) delay(1) }
+            assertEquals("recovered", runner.run { "recovered" })
+            assertEquals(3, begins.get())
+        } finally { release.countDown(); worker.shutdownNow() }
+    }
+    @Test fun userCancellationReturnsEvenWhenNativeCleanupIsStalled() = runBlocking {
+        val worker = Executors.newSingleThreadExecutor()
+        val release = CountDownLatch(1)
+        val entered = CompletableDeferred<Unit>()
+        try {
+            val runner = NativeTaskRunner({}, {}, worker, cleanupWaitMs = 30)
+            val job = launch { runner.run { entered.complete(Unit); release.await() } }
+            entered.await()
+            withTimeout(2000) { job.cancelAndJoin() }
+            assertTrue(job.isCancelled)
+            assertTrue(runCatching { runner.run { "must wait" } }.exceptionOrNull()!!.message!!.contains("停止処理"))
+        } finally { release.countDown(); worker.shutdownNow() }
     }
 }

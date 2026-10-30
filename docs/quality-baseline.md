@@ -38,6 +38,8 @@
 
 Actionsは推奨GGUFを検証し、アプリと共通のC++エンジンでこの入力を実行します。`MEL-Chat-quality-baseline`アーティファクトに入力の`requests.jsonl`、生成本文と時間・トークン数の`responses.jsonl`、人が読むための`BASELINE.md`を保存します。自動で品質合格にはしません。
 
+同じ出力集をActions実行のSummaryにも掲載するため、GalaxyのブラウザからZIPを展開せずに読めます。
+
 これはLinux CPUの測定で、Galaxyの性能を示しません。記憶ケースは事前に用意した要約と原文を使うため、自動要約モデルの品質や長期運用を証明しません。zeta側の出力や個人の会話は収集・送信しません。
 
 ## 実装の現状と限界
