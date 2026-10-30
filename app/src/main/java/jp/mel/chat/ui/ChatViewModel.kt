@@ -19,9 +19,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = application.getSharedPreferences("mel_ui", Application.MODE_PRIVATE)
     val characters = repository.dao.observeCharacters().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val selected = MutableStateFlow(preferences.getString("selected", null))
-    val messages = selected.flatMapLatest { if (it == null) flowOf(emptyList()) else repository.dao.observeMessages(it) }
+    val selectedPlot = MutableStateFlow(selected.value?.let { preferences.getString("plot_$it", it) })
+    val plots = selected.flatMapLatest { if (it == null) flowOf(emptyList()) else repository.dao.observePlots(it) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-    val memory = selected.flatMapLatest { if (it == null) flowOf(null) else repository.dao.observeMemory(it) }
+    val loreEntries = selected.flatMapLatest { if (it == null) flowOf(emptyList()) else repository.dao.observeLore(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val plotLoreSelection = selectedPlot.flatMapLatest { id ->
+        if (id == null) flowOf(null to emptySet<String>()) else repository.dao.observeLoreIds(id).map { id to it.toSet() }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null to emptySet())
+    val messages = selectedPlot.flatMapLatest { if (it == null) flowOf(emptyList()) else repository.dao.observeMessages(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val memory = selectedPlot.flatMapLatest { if (it == null) flowOf(null) else repository.dao.observeMemory(it) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val busy = MutableStateFlow(false)
     val loadingModels = MutableStateFlow(false)
@@ -37,6 +45,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val operations = Mutex()
 
     init {
+        viewModelScope.launch {
+            combine(selected, plots) { characterId, list -> list.filter { it.characterId == characterId } }.collect { list ->
+                if (list.isNotEmpty() && list.none { it.id == selectedPlot.value }) selectPlot(list.first().id)
+            }
+        }
         viewModelScope.launch { localProgress.collect { replies.stage(it.stage) } }
         viewModelScope.launch {
             try { withContext(Dispatchers.IO) {
@@ -68,7 +81,32 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun select(id: String?) {
         selected.value = id
+        selectedPlot.value = id?.let { preferences.getString("plot_$it", it) }
         preferences.edit().putString("selected", id).apply()
+    }
+    fun selectPlot(id: String) {
+        selectedPlot.value = id
+        selected.value?.let { preferences.edit().putString("plot_$it", id).apply() }
+    }
+    suspend fun plotLoreIds(id: String): Set<String> = withContext(Dispatchers.IO) { repository.dao.selectedLore(id).map { it.id }.toSet() }
+    fun savePlot(plot: PlotEntity, loreIds: Set<String>, done: () -> Unit) = perform {
+        repository.savePlot(plot, loreIds)
+        withContext(Dispatchers.Main) { selectPlot(plot.id); done() }
+    }
+    fun deletePlot(id: String, done: () -> Unit) = perform {
+        repository.deletePlot(id)
+        withContext(Dispatchers.Main) { done() }
+    }
+    fun saveLore(entry: LoreEntryEntity, plotId: String?, done: () -> Unit) = perform {
+        repository.saveLore(entry, plotId)
+        withContext(Dispatchers.Main) { done() }
+    }
+    fun deleteLore(id: String, done: () -> Unit) = perform {
+        repository.deleteLore(id)
+        withContext(Dispatchers.Main) { done() }
+    }
+    fun setLoreEnabled(plotId: String, loreId: String, enabled: Boolean) = perform {
+        repository.setLoreEnabled(plotId, loreId, enabled)
     }
 
     private fun perform(action: suspend () -> Unit) {

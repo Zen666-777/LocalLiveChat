@@ -15,8 +15,8 @@ android {
         applicationId = "jp.mel.chat"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.1.2-local-rp"
+        versionCode = 5
+        versionName = "1.2.0-stories"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_shared", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON") } }
@@ -38,6 +38,7 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     testOptions { unitTests.isIncludeAndroidResources = true }
+    sourceSets.getByName("test").resources.srcDir("schemas")
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }

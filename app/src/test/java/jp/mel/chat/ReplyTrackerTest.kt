@@ -19,7 +19,7 @@ class ReplyTrackerTest {
         tracker.start("mel")
         tracker.finish("空きメモリが足りません")
         val reopened = ReplyTracker(prefs)
-        assertEquals("mel", reopened.state.value.characterId)
+        assertEquals("mel", reopened.state.value.plotId)
         assertEquals("空きメモリが足りません", reopened.state.value.error)
         assertFalse(reopened.state.value.running)
         reopened.start("mel")

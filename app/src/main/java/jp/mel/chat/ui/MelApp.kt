@@ -36,6 +36,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import jp.mel.chat.data.CharacterEntity
 import jp.mel.chat.data.MemoryEntity
 import jp.mel.chat.data.MessageEntity
+import jp.mel.chat.data.PlotEntity
+import jp.mel.chat.data.LoreEntryEntity
 import jp.mel.chat.network.RemoteModel
 import jp.mel.chat.local.ModelState
 import jp.mel.chat.local.LocalModelStore
@@ -58,6 +60,10 @@ private val MelColors = darkColorScheme(primary = Lavender, secondary = Mint, ba
 fun MelApp(vm: ChatViewModel) {
     val characters by vm.characters.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
+    val plots by vm.plots.collectAsStateWithLifecycle()
+    val selectedPlot by vm.selectedPlot.collectAsStateWithLifecycle()
+    val loreEntries by vm.loreEntries.collectAsStateWithLifecycle()
+    val loreSelection by vm.plotLoreSelection.collectAsStateWithLifecycle()
     val messages by vm.messages.collectAsStateWithLifecycle()
     val memory by vm.memory.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
@@ -71,12 +77,22 @@ fun MelApp(vm: ChatViewModel) {
     val localProgress by vm.localProgress.collectAsStateWithLifecycle()
     val ready = if (offline) deviceModels.active != null else hasKey
     val character = characters.find { it.id == selected }
+    val plot = plots.find { it.id == selectedPlot && it.characterId == selected }
     var showChat by rememberSaveable { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
-    var showEditor by remember { mutableStateOf(false) }
-    var editing by remember { mutableStateOf<CharacterEntity?>(null) }
+    var showEditor by rememberSaveable { mutableStateOf(false) }
+    var editingCharacterId by rememberSaveable { mutableStateOf<String?>(null) }
+    val editing = characters.find { it.id == editingCharacterId }
     var showMemory by remember { mutableStateOf(false) }
     var showModel by remember { mutableStateOf(false) }
+    var showPlots by rememberSaveable { mutableStateOf(false) }
+    var showPlotEditor by rememberSaveable { mutableStateOf(false) }
+    var editingPlotId by rememberSaveable { mutableStateOf<String?>(null) }
+    val editingPlot = plots.find { it.id == editingPlotId }
+    var showLore by rememberSaveable { mutableStateOf(false) }
+    var showLoreEditor by rememberSaveable { mutableStateOf(false) }
+    var editingLoreId by rememberSaveable { mutableStateOf<String?>(null) }
+    val editingLore = loreEntries.find { it.id == editingLoreId }
     val snackbars = remember { SnackbarHostState() }
     LaunchedEffect(notice) { notice?.let {
         snackbars.showSnackbar(it)
@@ -106,35 +122,53 @@ fun MelApp(vm: ChatViewModel) {
                             CharacterList(characters, selected, wide, ready, offline,
                                 modifier = if (wide) Modifier.width(292.dp) else Modifier.fillMaxWidth(),
                                 onSelect = { vm.select(it); showChat = true },
-                                onCreate = { editing = null; showEditor = true }, onSettings = { showSettings = true })
+                                onCreate = { editingCharacterId = null; showEditor = true }, onSettings = { showSettings = true })
                         }
                         if (wide) VerticalDivider(color = Color.White.copy(alpha = 0.07f))
                         if (wide || showChat) {
                             if (character == null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 Text("キャラクターを選んで、物語をはじめよう。", color = Muted)
-                            } else ChatPane(character, messages.filter { it.characterId == character.id },
-                                memory?.takeIf { it.characterId == character.id }, busy, ready, wide, offline, deviceModels.active?.name,
-                                replyState.takeIf { it.characterId == character.id }, localProgress,
-                                onBack = { showChat = false }, onEdit = { editing = character; showEditor = true },
-                                onMemory = { showMemory = true }, onModel = { if (offline) showSettings = true else showModel = true }, onSettings = { showSettings = true },
-                                onSend = { text, accepted -> vm.send(character.id, text, accepted) },
-                                onEditPending = { text, done -> vm.editPending(character.id, text, done) },
-                                onRetry = { vm.send(character.id, null) }, onStop = vm::cancel)
+                            } else if (plot == null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text("プロットを読み込んでいます…", color = Muted)
+                            } else ChatPane(character, plot, messages.filter { it.characterId == character.id && it.plotId == plot.id },
+                                memory?.takeIf { it.plotId == plot.id }, busy, ready, wide, offline, deviceModels.active?.name,
+                                replyState.takeIf { it.plotId == plot.id }, localProgress,
+                                onBack = { showChat = false }, onEdit = { editingCharacterId = character.id; showEditor = true },
+                                onMemory = { showMemory = true }, onPlots = { showPlots = true }, onLore = { showLore = true },
+                                onModel = { if (offline) showSettings = true else showModel = true }, onSettings = { showSettings = true },
+                                onSend = { text, accepted -> vm.send(plot.id, text, accepted) },
+                                onEditPending = { text, done -> vm.editPending(plot.id, text, done) },
+                                onRetry = { vm.send(plot.id, null) }, onStop = vm::cancel)
                         }
                     }
                 }
             }
         }
         if (showSettings) SettingsDialog(hasKey, busy, offline, deviceModels, vm, vm::saveKey, vm::clearKey) { showSettings = false }
-        if (showEditor) CharacterEditor(editing, busy, models, loadingModels, vm::refreshModels, offline,
+        if (showEditor && (editingCharacterId == null || editing != null)) CharacterEditor(editing, busy, models, loadingModels, vm::refreshModels, offline,
             onSave = { vm.save(it) { showEditor = false; showChat = true } },
             onDelete = { id -> vm.delete(id) { showEditor = false; showChat = false } }, onDismiss = { showEditor = false })
-        if (showMemory && character != null) MemoryDialog(character.id, memory?.takeIf { it.characterId == character.id }, busy, offline,
-            onSave = { vm.saveMemory(character.id, it) { showMemory = false } },
-            onSummarize = { vm.summarize(character.id) }, onDismiss = { showMemory = false })
+        if (showMemory && plot != null) MemoryDialog(plot.id, memory?.takeIf { it.plotId == plot.id }, busy, offline,
+            onSave = { vm.saveMemory(plot.id, it) { showMemory = false } },
+            onSummarize = { vm.summarize(plot.id) }, onDismiss = { showMemory = false })
+        if (showPlots && character != null) PlotPicker(plots.filter { it.characterId == character.id }, selectedPlot, busy,
+            onPick = { vm.selectPlot(it); showPlots = false }, onNew = { editingPlotId = null; showPlots = false; showPlotEditor = true },
+            onEdit = { editingPlotId = it.id; showPlots = false; showPlotEditor = true }, onDismiss = { showPlots = false })
+        if (showPlotEditor && character != null && (editingPlotId == null || editingPlot != null)) PlotEditor(editingPlot, character, loreEntries.filter { it.characterId == character.id }, busy,
+            canDelete = plots.count { it.characterId == character.id } > 1, loadLoreIds = vm::plotLoreIds,
+            onSave = { story, ids -> vm.savePlot(story, ids) { showPlotEditor = false } },
+            onDelete = { id -> vm.deletePlot(id) { showPlotEditor = false } }, onDismiss = { showPlotEditor = false })
+        if (showLore && character != null && plot != null) LorebookDialog(plot.title, loreEntries.filter { it.characterId == character.id },
+            if (loreSelection.first == plot.id) loreSelection.second else emptySet(), busy || loreSelection.first != plot.id,
+            onToggle = { id, enabled -> vm.setLoreEnabled(plot.id, id, enabled) },
+            onNew = { editingLoreId = null; showLore = false; showLoreEditor = true },
+            onEdit = { editingLoreId = it.id; showLore = false; showLoreEditor = true }, onDismiss = { showLore = false })
+        if (showLoreEditor && character != null && plot != null && (editingLoreId == null || editingLore != null)) LoreEditor(editingLore, character.id, busy,
+            onSave = { vm.saveLore(it, plot.id) { showLoreEditor = false; showLore = true } },
+            onDelete = { id -> vm.deleteLore(id) { showLoreEditor = false; showLore = true } }, onDismiss = { showLoreEditor = false; showLore = true })
         if (showModel && character != null) ModelPicker(models, loadingModels, vm::refreshModels,
             onPick = { model -> vm.save(character.copy(model = model.id, contextTokens = model.contextTokens)) { showModel = false } },
-            onManual = { showModel = false; editing = character; showEditor = true }, onDismiss = { showModel = false }, enabled = !busy)
+            onManual = { showModel = false; editingCharacterId = character.id; showEditor = true }, onDismiss = { showModel = false }, enabled = !busy)
     }
 }
 
@@ -190,15 +224,15 @@ private fun Avatar(name: String, size: Int) {
 }
 
 @Composable
-private fun ChatPane(character: CharacterEntity, messages: List<MessageEntity>, memory: MemoryEntity?, busy: Boolean,
+private fun ChatPane(character: CharacterEntity, plot: PlotEntity, messages: List<MessageEntity>, memory: MemoryEntity?, busy: Boolean,
     hasKey: Boolean, wide: Boolean, offline: Boolean, localModelName: String?, replyState: ReplyState?, progress: LocalProgress,
-    onBack: () -> Unit, onEdit: () -> Unit, onMemory: () -> Unit,
+    onBack: () -> Unit, onEdit: () -> Unit, onMemory: () -> Unit, onPlots: () -> Unit, onLore: () -> Unit,
     onModel: () -> Unit, onSettings: () -> Unit, onSend: (String, () -> Unit) -> Unit,
     onEditPending: (String, () -> Unit) -> Unit, onRetry: () -> Unit, onStop: () -> Unit) {
-    var draft by rememberSaveable(character.id) { mutableStateOf("") }
+    var draft by rememberSaveable(plot.id) { mutableStateOf("") }
     val pending = messages.lastOrNull()?.role == "user"
-    var editingPending by remember(character.id) { mutableStateOf(false) }
-    var pendingText by remember(character.id) { mutableStateOf("") }
+    var editingPending by remember(plot.id) { mutableStateOf(false) }
+    var pendingText by remember(plot.id) { mutableStateOf("") }
     val scroll = rememberLazyListState()
     var seconds by remember { mutableLongStateOf(0) }
     LaunchedEffect(replyState?.startedAt, replyState?.running) {
@@ -207,7 +241,7 @@ private fun ChatPane(character: CharacterEntity, messages: List<MessageEntity>, 
             delay(1000)
         }
     }
-    LaunchedEffect(character.id, messages.size, busy, progress.text.isNotBlank(), progress.text.length / 80) {
+    LaunchedEffect(plot.id, messages.size, busy, progress.text.isNotBlank(), progress.text.length / 80) {
         if (messages.isNotEmpty()) scroll.animateScrollToItem(if (busy) messages.size else messages.lastIndex)
     }
     Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF181321), Ink, Ink)))) {
@@ -221,6 +255,11 @@ private fun ChatPane(character: CharacterEntity, messages: List<MessageEntity>, 
             }
             IconButton(onMemory, enabled = !busy) { Icon(Icons.Outlined.Psychology, "長期記憶", tint = Lavender) }
             IconButton(onEdit, enabled = !busy) { Icon(Icons.Outlined.Edit, "キャラクターを編集") }
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+            AssistChip(onClick = onPlots, enabled = !busy, label = { Text(plot.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                leadingIcon = { Icon(Icons.Outlined.AutoStories, null, Modifier.size(16.dp)) }, modifier = Modifier.weight(1f))
+            TextButton(onLore, enabled = !busy) { Text("ロアブック", fontSize = 12.sp) }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             AssistChip(onClick = onModel, enabled = !busy, label = { Text(if (offline) localModelName ?: "端末モデル未設定" else character.model, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 10.sp) },
@@ -308,7 +347,7 @@ private fun MessageBubble(message: MessageEntity, name: String) {
 }
 
 @Composable
-private fun Sheet(title: String, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+internal fun Sheet(title: String, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(shape = RoundedCornerShape(26.dp), color = Panel, modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth(0.94f).heightIn(max = 760.dp).imePadding()) {
             Column(Modifier.padding(22.dp)) {
@@ -408,14 +447,16 @@ private fun SettingsDialog(hasKey: Boolean, busy: Boolean, offline: Boolean, dev
 @Composable
 private fun CharacterEditor(original: CharacterEntity?, busy: Boolean, models: List<RemoteModel>, loading: Boolean,
     onRefresh: () -> Unit, offline: Boolean, onSave: (CharacterEntity) -> Unit, onDelete: (String) -> Unit, onDismiss: () -> Unit) {
-    val base = remember { original ?: CharacterEntity() }
-    var name by remember { mutableStateOf(base.name) }
-    var subtitle by remember { mutableStateOf(base.subtitle) }
-    var persona by remember { mutableStateOf(base.persona) }
-    var greeting by remember { mutableStateOf(base.greeting) }
-    var model by remember { mutableStateOf(base.model) }
-    var context by remember { mutableStateOf(base.contextTokens.toString()) }
-    var temperature by remember { mutableFloatStateOf(base.temperature) }
+    val newId by rememberSaveable { mutableStateOf(java.util.UUID.randomUUID().toString()) }
+    val base = remember { original ?: CharacterEntity(id = newId) }
+    var name by rememberSaveable(base.id) { mutableStateOf(base.name) }
+    var subtitle by rememberSaveable(base.id) { mutableStateOf(base.subtitle) }
+    var persona by rememberSaveable(base.id) { mutableStateOf(base.persona) }
+    var details by rememberSaveable(base.id) { mutableStateOf(base.details) }
+    var greeting by rememberSaveable(base.id) { mutableStateOf(base.greeting) }
+    var model by rememberSaveable(base.id) { mutableStateOf(base.model) }
+    var context by rememberSaveable(base.id) { mutableStateOf(base.contextTokens.toString()) }
+    var temperature by rememberSaveable(base.id) { mutableFloatStateOf(base.temperature) }
     var picker by remember { mutableStateOf(false) }
     var deleteConfirmation by remember { mutableStateOf(false) }
     Sheet(if (original == null) "新しいキャラクター" else "キャラクターを編集", onDismiss) {
@@ -424,6 +465,8 @@ private fun CharacterEditor(original: CharacterEntity?, busy: Boolean, models: L
             OutlinedTextField(subtitle, { if (it.length <= 120) subtitle = it }, label = { Text("ひとこと紹介") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(persona, { if (it.length <= 6000) persona = it }, label = { Text("性格・話し方・世界観") }, minLines = 4,
                 placeholder = { Text("大切にしてほしい設定を、自由に。") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(details, { if (it.length <= 6000) details = it }, label = { Text("詳細プロフィール（容姿・過去・関係性など）") }, minLines = 4,
+                supportingText = { Text("すべてのプロットで使う基本設定です。プロット別の詳細はロアブックにも登録できます。") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(greeting, { if (it.length <= 2000) greeting = it }, label = { Text("最初の挨拶（作成時のみ使用）") }, minLines = 2, modifier = Modifier.fillMaxWidth())
             if (!offline) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -438,12 +481,12 @@ private fun CharacterEditor(original: CharacterEntity?, busy: Boolean, models: L
             Slider(temperature, { temperature = it }, valueRange = 0f..2f)
             if (original != null) TextButton(onClick = { deleteConfirmation = true }, enabled = !busy) { Text("キャラクターを削除", color = MaterialTheme.colorScheme.error) }
         }
-        Button(onClick = { onSave(base.copy(name = name.trim(), subtitle = subtitle.trim(), persona = persona.trim(), greeting = greeting.trim(), model = model, contextTokens = context.toIntOrNull() ?: 0, temperature = temperature)) },
+        Button(onClick = { onSave(base.copy(name = name.trim(), subtitle = subtitle.trim(), persona = persona.trim(), details = details.trim(), greeting = greeting.trim(), model = model, contextTokens = context.toIntOrNull() ?: 0, temperature = temperature)) },
             enabled = !busy && name.isNotBlank(), modifier = Modifier.fillMaxWidth().padding(top = 14.dp)) { Text("保存する") }
     }
     if (picker) ModelPicker(models, loading, onRefresh, onPick = { model = it.id; context = it.contextTokens.toString(); picker = false }, onManual = { picker = false }, onDismiss = { picker = false })
     if (deleteConfirmation) AlertDialog(onDismissRequest = { deleteConfirmation = false }, title = { Text("削除しますか？") },
-        text = { Text("このキャラクターの会話履歴と長期記憶も削除されます。元に戻せません。") },
+        text = { Text("このキャラクターの全プロット・ロアブック・会話履歴・長期記憶も削除されます。元に戻せません。") },
         confirmButton = { TextButton(onClick = { deleteConfirmation = false; onDelete(base.id) }, enabled = !busy) { Text("削除") } },
         dismissButton = { TextButton(onClick = { deleteConfirmation = false }) { Text("キャンセル") } })
 }
@@ -483,9 +526,9 @@ private fun ModelPicker(models: List<RemoteModel>, loading: Boolean, onRefresh: 
 @Composable
 private fun MemoryDialog(id: String, memory: MemoryEntity?, busy: Boolean, offline: Boolean, onSave: (String) -> Unit, onSummarize: () -> Unit, onDismiss: () -> Unit) {
     var text by remember(id, memory?.updatedAt) { mutableStateOf(memory?.summary.orEmpty()) }
-    Sheet("ふたりの長期記憶", onDismiss) {
+    Sheet("このプロットの長期記憶", onDismiss) {
         Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("会話が24件を超えると、以前の内容を自動で要約します。直近8件はそのまま文脈に残し、元の履歴もすべて保存します。", color = Muted, fontSize = 12.sp)
+            Text("このプロットの会話が24件を超えるか、文脈上限に近づくと自動で要約します。通常は直近8件、端末モデルで文脈が足りない場合は2件まで残してまとめます。元の履歴も保存します。", color = Muted, fontSize = 12.sp)
             Text(if (memory == null) "まだ要約はありません" else "更新: " + SimpleDateFormat("M/d HH:mm", Locale.JAPAN).format(Date(memory.updatedAt)), color = Mint, fontSize = 11.sp)
             OutlinedTextField(text, { if (it.length <= 3000) text = it }, label = { Text("覚えておいてほしいこと") }, minLines = 7,
                 supportingText = { Text("${text.length} / 3000  ·  編集内容は次の自動要約に統合します") }, enabled = !busy, modifier = Modifier.fillMaxWidth())

@@ -94,6 +94,7 @@ class ChatRepositoryTest {
         val first = Room.databaseBuilder(context, ChatDatabase::class.java, name).allowMainThreadQueries().build()
         try {
             first.chatDao().saveCharacter(a)
+            first.chatDao().savePlot(PlotEntity(id = "a", characterId = "a", title = "Main"))
             first.chatDao().insertMessage(MessageEntity(characterId = "a", role = "user", content = "stored"))
         } finally { first.close() }
         val second = Room.databaseBuilder(context, ChatDatabase::class.java, name).allowMainThreadQueries().build()

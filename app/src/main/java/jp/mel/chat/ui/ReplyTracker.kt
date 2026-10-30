@@ -4,7 +4,7 @@ import android.content.SharedPreferences
 import android.os.SystemClock
 import kotlinx.coroutines.flow.MutableStateFlow
 
-data class ReplyState(val characterId: String? = null, val running: Boolean = false,
+data class ReplyState(val plotId: String? = null, val running: Boolean = false,
     val stage: String = "", val startedAt: Long = 0, val error: String? = null)
 
 /** Persists diagnostics, never prompts or generated text. Survives an OS process kill. */
@@ -17,9 +17,9 @@ class ReplyTracker(private val prefs: SharedPreferences) {
             val message = "前回の返信処理が中断されました（最後の処理：$phase）。アプリ終了やメモリ不足などが考えられます。再試行してください。投稿は保存されています。"
             prefs.edit().remove("reply_inflight").remove("reply_stage")
                 .putString("reply_error_id", interrupted).putString("reply_error", message).commit()
-            return ReplyState(characterId = interrupted, error = message)
+            return ReplyState(plotId = interrupted, error = message)
         }
-        return ReplyState(characterId = prefs.getString("reply_error_id", null), error = prefs.getString("reply_error", null))
+        return ReplyState(plotId = prefs.getString("reply_error_id", null), error = prefs.getString("reply_error", null))
     }
     @Synchronized fun start(id: String) {
         check(prefs.edit().putString("reply_inflight", id).putString("reply_stage", "返信の準備中")
@@ -35,7 +35,7 @@ class ReplyTracker(private val prefs: SharedPreferences) {
     @Synchronized fun finish(error: String? = null) {
         val current = state.value
         prefs.edit().remove("reply_inflight").remove("reply_stage")
-            .putString("reply_error_id", if (error == null) null else current.characterId)
+            .putString("reply_error_id", if (error == null) null else current.plotId)
             .putString("reply_error", error).commit()
         state.value = current.copy(running = false, error = error)
     }

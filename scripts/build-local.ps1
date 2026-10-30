@@ -32,7 +32,10 @@ foreach ($taskDirectory in @('app/src', 'app/schemas', 'gradle', 'config')) {
     $taskDestination = [IO.Path]::GetFullPath($taskDestination)
     if (!$taskDestination.StartsWith($taskSourceStage + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Mirror destination outside the temporary source workspace' }
     if ((Test-Path -LiteralPath $taskDestination) -and ((Get-Item -LiteralPath $taskDestination -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Refusing to mirror into a junction' }
-    & robocopy $taskSource $taskDestination /MIR /XJ /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
+    # Schemas are processor outputs as well as inputs. Preserve a newly
+    # generated version until it is copied back after a successful build.
+    $taskMirrorMode = if ($taskDirectory -eq 'app/schemas') { '/E' } else { '/MIR' }
+    & robocopy $taskSource $taskDestination $taskMirrorMode /XJ /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "Could not stage $taskDirectory" }
 }
 foreach ($taskFile in @('settings.gradle.kts', 'build.gradle.kts', 'gradle.properties', 'gradlew.bat', 'app/build.gradle.kts')) {
@@ -44,6 +47,26 @@ Set-Location $taskSourceStage
 $taskTestRun = [Guid]::NewGuid().ToString('N')
 & .\gradlew.bat --no-daemon '-Dorg.gradle.jvmargs=-Xmx3g -Dfile.encoding=MS932' "-PmelLocalTestRun=$taskTestRun" "-PmelLocalBuildDirectory=$taskLocalBuildDirectory" testDebugUnitTest lintDebug assembleDebug @args
 $taskBuildExitCode = $LASTEXITCODE
+if ($taskBuildExitCode -eq 0) {
+    # Keep newly exported Room schemas in the repository even though Gradle
+    # builds in a temp workspace. Published schema versions remain immutable.
+    $taskGeneratedSchemaRoot = [IO.Path]::GetFullPath((Join-Path $taskSourceStage 'app/schemas'))
+    $taskSavedSchemaRoot = [IO.Path]::GetFullPath((Join-Path $taskRoot 'app/schemas'))
+    Get-ChildItem -LiteralPath $taskGeneratedSchemaRoot -Recurse -File -Filter '*.json' | ForEach-Object {
+        $taskRelativeSchema = $_.FullName.Substring($taskGeneratedSchemaRoot.Length + 1)
+        $taskTargetSchema = [IO.Path]::GetFullPath((Join-Path $taskSavedSchemaRoot $taskRelativeSchema))
+        if (!$taskTargetSchema.StartsWith($taskSavedSchemaRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Schema destination outside workspace schemas' }
+        if (Test-Path -LiteralPath $taskTargetSchema) {
+            $taskSavedSchema = Get-Content -LiteralPath $taskTargetSchema -Raw | ConvertFrom-Json
+            $taskGeneratedSchema = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+            if ($taskSavedSchema.database.identityHash -cne $taskGeneratedSchema.database.identityHash) { throw 'Room schema changed without increasing the database version' }
+        } else {
+            New-Item -ItemType Directory -Force (Split-Path $taskTargetSchema -Parent) | Out-Null
+            Copy-Item -LiteralPath $_.FullName -Destination $taskTargetSchema
+            Write-Output "Saved exported Room schema: $taskRelativeSchema"
+        }
+    }
+}
 if ($taskBuildExitCode -eq 0 -and (Test-Path -LiteralPath $taskFixedKeystore)) {
     $taskCertificate = & (Join-Path $env:ANDROID_HOME 'build-tools/35.0.0/apksigner.bat') verify --print-certs (Join-Path $taskLocalBuildDirectory 'outputs/apk/debug/app-debug.apk')
     if ($LASTEXITCODE -ne 0) { throw 'APK signature verification failed' }
