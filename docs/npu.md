@@ -1,5 +1,20 @@
 # Hexagon NPU trial
 
+## スマホで試す手順
+
+NPU試験版は実機での確認が必要です。ビルド成功だけで、SM-F971ZのNPUで動作したとは扱いません。
+
+1. `MEL-Chat-NPU-TEST-APK` のZIPを展開し、APKを上書きインストールします。
+2. 接続の設定で「NPU優先（試験）」を選びます。
+3. 「NPU試験用Q4_0をブラウザで取得」から約2.4GBのモデルを取得します。
+4. 同じ設定画面の「別のGGUFモデルを読み込む」で追加・選択します。
+5. 短いメッセージを送り、設定に表示される処理先を確認します。
+
+「NPU割り当て」はNPUへのモデル配置を表します。CPUの処理も併用します。
+GPU／CPUと表示された場合は、その下にNPUを使わなかった理由を表示します。
+標準のQ4_K_Mは今回のNPU試験対象外です。元のモデルも保持して比較できます。
+会話の自然さ、速度、発熱、電池持ちの改善はまだ実機で確認していません。
+
 User device: SM-F971Z. Samsung identifies it as Galaxy Z Fold8; SoftBank lists
 Snapdragon 8 Elite Gen 5 for Galaxy and 12 GB RAM for that carrier model.
 This identifies the hardware family, not permission for an ordinary Android
