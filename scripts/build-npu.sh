@@ -13,6 +13,7 @@ cmake -S app/src/main/cpp -B "$mel_build" -G Ninja \
   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26 \
   -DANDROID_STL=c++_shared -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
   -DMEL_VULKAN=OFF -DGGML_HEXAGON=ON \
+  -DPREBUILT_LIB_DIR=android_Release_aarch64 \
   -DHEXAGON_SDK_ROOT="$HEXAGON_SDK_ROOT" -DHEXAGON_TOOLS_ROOT="$HEXAGON_TOOLS_ROOT"
 cmake --build "$mel_build" --target mel_llm htp-v73 htp-v75 htp-v79 htp-v81 -j 2
 find "$mel_build" -type f -name 'libggml-htp-v*.so' -exec cp {} "$mel_output/" \;
