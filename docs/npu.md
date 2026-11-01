@@ -1,5 +1,14 @@
 # Hexagon NPU trial
 
+Verified build: code commit `5a365e3f11e26134ea7e1f5f1f4ed5a5c679c7e2`,
+[NPU workflow 41302392460](https://github.com/Zen666-777/LocalLiveChat/actions/runs/41302392460),
+[NPU test APK](https://github.com/Zen666-777/LocalLiveChat/actions/runs/41302392460/artifacts/13082725058).
+The SDK build, 79 unit tests, lint, fixed signing certificate, Hexagon asset
+hashes/machine types, host missing-driver check and format/CPU-embedding check
+passed. The [normal GPU/CPU workflow](https://github.com/Zen666-777/LocalLiveChat/actions/runs/41302392685)
+also passed, including Vulkan software inference and the real 4B/JNI checks.
+Physical SM-F971Z NPU execution and performance remain unverified.
+
 ## スマホで試す手順
 
 NPU試験版は実機での確認が必要です。ビルド成功だけで、SM-F971ZのNPUで動作したとは扱いません。
