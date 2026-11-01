@@ -20,7 +20,7 @@ jobs:
       - name: Install the Vulkan software test driver and shader compiler
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libvulkan-dev mesa-vulkan-drivers glslc ninja-build
+          sudo apt-get install -y --no-install-recommends libvulkan-dev mesa-vulkan-drivers vulkan-tools glslc ninja-build
       - name: Compile the actual Vulkan inference backend
         run: |
           cmake -S app/src/main/cpp -B /tmp/mel-vulkan -G Ninja -DMEL_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
@@ -29,9 +29,15 @@ jobs:
         env:
           # Force Mesa's software Vulkan device on this GPU-less runner. This
           # validates the GPU code path, not Snapdragon performance/compatibility.
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
           GGML_VK_VISIBLE_DEVICES: '0'
         run: |
+          # Mesa releases use both lvp_icd.json and lvp_icd.x86_64.json.
+          # Discover and validate the installed file rather than silently
+          # disabling Vulkan by pointing the loader at a nonexistent manifest.
+          mel_icd=$(find /usr/share/vulkan/icd.d -maxdepth 1 -name 'lvp_icd*.json' -print -quit)
+          test -n "$mel_icd"
+          export VK_ICD_FILENAMES="$mel_icd"
+          vulkaninfo --summary
           curl --fail --location --retry 3 --output /tmp/mel-gpu-fixture.gguf 'https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/60b85c0e3d8fe0f6474f406922a26d12aca4550d/Qwen_Qwen3-0.6B-Q4_K_M.gguf'
           echo '9acfc1e001311f34b4252001b626f2e466d592a42065f66571bff3790d4e1b14  /tmp/mel-gpu-fixture.gguf' | sha256sum --check
           /tmp/mel-vulkan/mel-smoke /tmp/mel-gpu-fixture.gguf --gpu

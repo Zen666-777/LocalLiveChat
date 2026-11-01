@@ -12,9 +12,9 @@ int main(int argc, char **argv) {
         mel::Engine engine;
         engine.begin();
         engine.load(argv[1], 4096, 2, {}, gpu || fallback);
+        std::cout << "Selected backend: " << engine.backendInfo() << std::endl;
         if (gpu && engine.backendInfo().find("gpu\n") != 0) throw std::runtime_error("GPU test unexpectedly fell back to CPU");
         if (fallback && engine.backendInfo() != "cpu\nunavailable") throw std::runtime_error("missing GPU did not use CPU");
-        std::cout << "Selected backend: " << engine.backendInfo() << "\n";
         std::vector<mel::Turn> turns = {
             {"system", "あなたはメル。親しみやすい日本語の会話相手です。短く自然に返事してください。"},
             {"user", "ただいま。今日は少し疲れたよ。"},
