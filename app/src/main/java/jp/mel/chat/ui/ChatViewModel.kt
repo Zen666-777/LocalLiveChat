@@ -45,6 +45,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val replyState = replies.state
     val localProgress = app.device.progress
     val preferGpu = app.acceleration.preferGpu
+    val preferNpu = app.acceleration.preferNpu
+    val npuIncluded = MutableStateFlow(false)
     val gpuRecovery = app.acceleration.recovery
     val inferenceDevice = app.acceleration.device
     fun setPreferGpu(value: Boolean) = perform {
@@ -52,10 +54,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         app.device.release()
         app.acceleration.selectGpu(value)
     }
+    fun setPreferNpu() = perform {
+        check(app.device.npuIncluded()) { "このAPKにはNPU用エンジンが含まれていません。" }
+        app.device.release()
+        app.acceleration.selectNpu()
+    }
     private var work: Job? = null
     private val operations = Mutex()
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            try { npuIncluded.value = app.device.npuIncluded() }
+            catch (_: Exception) { npuIncluded.value = false }
+        }
         viewModelScope.launch {
             combine(selected, plots) { characterId, list -> list.filter { it.characterId == characterId } }.collect { list ->
                 if (list.isNotEmpty() && list.none { it.id == selectedPlot.value }) selectPlot(list.first().id)

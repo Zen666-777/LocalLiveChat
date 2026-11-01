@@ -15,11 +15,18 @@ android {
         applicationId = "jp.mel.chat"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.4.0-gpu"
+        versionCode = 9
+        versionName = if (providers.environmentVariable("HEXAGON_SDK_ROOT").isPresent) "1.5.0-npu-test" else "1.4.1-gpu"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
-        externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_shared", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON") } }
+        externalNativeBuild { cmake {
+            arguments += listOf("-DANDROID_STL=c++_shared", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON")
+            val npuSdk = providers.environmentVariable("HEXAGON_SDK_ROOT").orNull
+            arguments += "-DMEL_HEXAGON=${if (npuSdk == null) "OFF" else "ON"}"
+            if (npuSdk != null) {
+                arguments += listOf("-DHEXAGON_SDK_ROOT=$npuSdk", "-DPREBUILT_LIB_DIR=android_aarch64")
+            }
+        } }
     }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     buildFeatures { compose = true }

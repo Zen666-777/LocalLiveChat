@@ -15,8 +15,9 @@ internal object LlamaBridge {
     init { System.loadLibrary("mel_llm") }
     external fun begin()
     external fun cancel()
-    external fun load(path: String, context: Int, threads: Int, progress: NativeProgress, preferGpu: Boolean)
+    external fun load(path: String, context: Int, threads: Int, progress: NativeProgress, preferGpu: Boolean, preferNpu: Boolean, kernels: String)
     external fun backendInfo(): String
+    external fun npuIncluded(): Boolean
     external fun unload()
     external fun count(roles: Array<String>, contents: Array<String>): Int
     external fun generate(roles: Array<String>, contents: Array<String>, temperature: Float, limit: Int, progress: NativeProgress): String
@@ -28,6 +29,12 @@ class LocalChatService(private val context: Context, private val store: LocalMod
     val progress = MutableStateFlow(LocalProgress())
     private var loaded: String? = null
     private var loadedGpu = false
+    private var loadedNpu = false
+    // A build capability query neither touches the engine nor invalidates an
+    // active generation's progress callbacks.
+    suspend fun npuIncluded(): Boolean = withContext(Dispatchers.IO) {
+        try { LlamaBridge.npuIncluded() } catch (_: LinkageError) { false }
+    }
     private val progressLock = Any()
     private var progressGeneration = 0L
     override val local = true
@@ -42,19 +49,21 @@ class LocalChatService(private val context: Context, private val store: LocalMod
     }
     private suspend fun <T> native(action: (Long) -> T): T {
         val operation = synchronized(progressLock) { ++progressGeneration }
-        return try { runner.run { acceleration.run { gpu ->
+        return try { runner.run { acceleration.runWithDevices { gpu, npu ->
             requestedGpu = gpu
+            requestedNpu = npu
             action(operation)
         } } }
         finally { synchronized(progressLock) { if (progressGeneration == operation) progressGeneration++ } }
     }
     // Accessed only by the single inference worker.
     private var requestedGpu = false
+    private var requestedNpu = false
     private fun ensureLoaded(operation: Long) {
         val model = store.active() ?: error("設定からローカルモデルを取得・選択してください。")
         val file = store.file(model)
         check(file.isFile && file.length() == model.bytes) { "モデルが見つからないか破損しています。再取得してください。" }
-        if (loaded == model.sha256 && loadedGpu == requestedGpu) return
+        if (loaded == model.sha256 && loadedGpu == requestedGpu && loadedNpu == requestedNpu) return
         LlamaBridge.unload()
         loaded = null
         publish(operation, LocalProgress("空きメモリを確認中"))
@@ -64,10 +73,12 @@ class LocalChatService(private val context: Context, private val store: LocalMod
             "モデル用の空きメモリが足りません（空き約${memory.availMem / (1024 * 1024)}MB、目安約${(model.bytes + 768L * 1024 * 1024) / (1024 * 1024)}MB必要）。他のアプリを閉じるか、小さいモデルを選んでください。"
         }
         publish(operation, LocalProgress("モデルを読み込み中"))
+        val kernels = if (requestedNpu && LlamaBridge.npuIncluded()) runCatching { NpuKernels(context).prepare() }.getOrDefault("") else ""
         LlamaBridge.load(file.absolutePath, contextLimit, Runtime.getRuntime().availableProcessors().coerceIn(1, 4),
-            NativeProgress { _, current, total, _ -> publish(operation, LocalProgress("モデルを読み込み中", current, total)) }, requestedGpu)
+            NativeProgress { _, current, total, _ -> publish(operation, LocalProgress("モデルを読み込み中", current, total)) }, requestedGpu, requestedNpu, kernels)
         acceleration.loaded(LlamaBridge.backendInfo())
         loadedGpu = requestedGpu
+        loadedNpu = requestedNpu
         loaded = model.sha256
     }
 

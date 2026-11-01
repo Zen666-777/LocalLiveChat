@@ -9,13 +9,16 @@ namespace mel {
 struct Turn { std::string role, content; };
 using Progress = std::function<void(int, int, int, const std::string &)>;
 std::string completeUtf8(const std::string &text);
+bool npuFormatSupported(const std::string &path);
 // All methods except cancel() run on the one inference worker.
 class Engine {
 public:
     ~Engine();
     void begin() { cancelled.store(false); }
     void cancel() { cancelled.store(true); }
-    void load(const std::string &path, int contextSize, int threads, const Progress &report = {}, bool preferGpu = false);
+    void load(const std::string &path, int contextSize, int threads, const Progress &report = {}, bool preferGpu = false,
+        bool preferNpu = false, const std::string &kernelDirectory = "");
+    static bool npuIncluded();
     std::string backendInfo() const { return backend; }
     void unload();
     int count(const std::vector<Turn> &turns);

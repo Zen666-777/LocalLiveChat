@@ -10,6 +10,7 @@ local.properties
 *.log
 .idea/
 dist/
+app/src/main/assets/npu/
 MEL-Studio-v*-APK/
 MEL-Studio-v*-APK.zip
 _recovery_v040/

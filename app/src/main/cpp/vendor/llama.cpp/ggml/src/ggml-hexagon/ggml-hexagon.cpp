@@ -4403,15 +4403,10 @@ static void ggml_hexagon_init(ggml_backend_reg * reg) {
     if (!str_arch) {
         int err = htpdrv_get_arch(CDSP_DOMAIN_ID, &opt_arch);
         if (err != 0) {
-            GGML_LOG_ERROR("ggml-hex: failed to query HTP version (err %d) defaulting to v73\n", err);
-            opt_arch = 73;
+            throw std::runtime_error("Cannot verify Hexagon architecture");
         } else {
-            if (opt_arch < 73) {
-                GGML_LOG_WARN("ggml-hex: Hexagon arch v%d is under supported range, capping at v73\n", opt_arch);
-                opt_arch = 73;
-            } else if (opt_arch > 81) {
-                GGML_LOG_WARN("ggml-hex: Hexagon arch v%d is over supported range, capping at v81\n", opt_arch);
-                opt_arch = 81;
+            if (opt_arch != 73 && opt_arch != 75 && opt_arch != 79 && opt_arch != 81) {
+                throw std::runtime_error("Unsupported Hexagon architecture");
             }
         }
     } else {

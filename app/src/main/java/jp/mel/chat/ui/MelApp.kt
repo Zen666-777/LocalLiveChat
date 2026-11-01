@@ -1,4 +1,4 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 
 package jp.mel.chat.ui
 
@@ -373,6 +373,8 @@ private fun SettingsDialog(hasKey: Boolean, busy: Boolean, offline: Boolean, dev
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::importModel) }
     var deleting by remember { mutableStateOf<String?>(null) }
     val preferGpu by vm.preferGpu.collectAsStateWithLifecycle()
+    val preferNpu by vm.preferNpu.collectAsStateWithLifecycle()
+    val npuIncluded by vm.npuIncluded.collectAsStateWithLifecycle()
     val gpuRecovery by vm.gpuRecovery.collectAsStateWithLifecycle()
     val inferenceDevice by vm.inferenceDevice.collectAsStateWithLifecycle()
     Sheet("接続の設定", onDismiss) {
@@ -386,15 +388,24 @@ private fun SettingsDialog(hasKey: Boolean, busy: Boolean, offline: Boolean, dev
             }
             if (offline) {
                 Text("端末の処理能力", color = Lavender, fontSize = 13.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = preferGpu, onClick = { vm.setPreferGpu(true) }, enabled = !busy, label = { Text("GPU優先") })
-                    FilterChip(selected = !preferGpu, onClick = { vm.setPreferGpu(false) }, enabled = !busy, label = { Text("CPUのみ") })
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (npuIncluded) FilterChip(selected = preferNpu, onClick = vm::setPreferNpu, enabled = !busy, label = { Text("NPU優先（試験）") })
+                    FilterChip(selected = preferGpu && !preferNpu, onClick = { vm.setPreferGpu(true) }, enabled = !busy, label = { Text("GPU優先") })
+                    FilterChip(selected = !preferGpu && !preferNpu, onClick = { vm.setPreferGpu(false) }, enabled = !busy, label = { Text("CPUのみ") })
                 }
                 Text(inferenceDevice.label, color = Mint, fontSize = 12.sp)
+                if (inferenceDevice.fallback.isNotBlank()) Text(inferenceDevice.fallback, color = Muted, fontSize = 11.sp)
                 if (gpuRecovery) {
-                    Text("前回GPUの処理中にアプリが終了したため、CPUで動かします。GPUを試し直す場合は「GPU優先」を押してください。", color = Muted, fontSize = 11.sp)
+                    Text("前回の加速処理中にアプリが終了したため、CPUで動かします。試し直す場合は処理先を選び直してください。", color = Muted, fontSize = 11.sp)
                 }
-                Text("GPU優先ではVulkan対応GPUへモデルを割り当てます。利用できない場合はCPUで動きます。速度や発熱は端末とモデルにより変わります。NPUはまだ使用しません。", color = Muted, fontSize = 11.sp)
+                Text("GPU優先ではVulkan対応GPUへモデルを割り当てます。利用できない場合はCPUで動きます。速度や発熱は端末とモデルにより変わります。", color = Muted, fontSize = 11.sp)
+                Text(if (npuIncluded) "NPUはHexagon対応端末向けの試験機能です。Q4_0などの対応GGUFが必要で、標準のQ4_K_MはGPU／CPUを使います。利用できない場合はGPU／CPUへ戻ります。実機での速度・安定性は未確認です。"
+                    else "このAPKはGPU版です。NPU用エンジンは含まれていません。", color = Muted, fontSize = 11.sp)
+                if (npuIncluded) {
+                    TextButton({ runCatching { uriHandler.openUri(LocalModelStore.NPU_URL) }
+                        .onFailure { vm.notice.value = "ブラウザを開けませんでした。" } }, enabled = !busy) { Text("NPU試験用Q4_0をブラウザで取得（約2.4GB）") }
+                    Text("取得後、下の「別のGGUFモデルを読み込む」で追加・選択してください。Q4_0への変更で回答品質も変わるため、元のモデルも残して比較できます。", color = Muted, fontSize = 11.sp)
+                }
                 Text("MEL RP · ローカルモデル", color = Lavender, fontSize = 13.sp)
                 Text("初回だけモデルを取得します。その後は機内モードでも会話・自動要約ができます。キャラの口調と物語の連続性を重視した会話設定を使います。追加学習済みの独自モデルではありません。", color = Muted, fontSize = 12.sp)
                 Text("推奨: ${LocalModelStore.NAME}\n約2.5GB · Apache 2.0\n端末での速度・発熱はモデルと空きメモリで変わります。", color = Muted, fontSize = 12.sp)

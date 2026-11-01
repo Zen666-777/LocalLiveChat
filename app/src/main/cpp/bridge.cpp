@@ -61,10 +61,11 @@ mel::Progress reporter(JNIEnv *env, jobject callback) {
 extern "C" JNIEXPORT void JNICALL Java_jp_mel_chat_local_LlamaBridge_begin(JNIEnv *, jobject) { engine.begin(); }
 extern "C" JNIEXPORT void JNICALL Java_jp_mel_chat_local_LlamaBridge_cancel(JNIEnv *, jobject) { engine.cancel(); }
 extern "C" JNIEXPORT void JNICALL Java_jp_mel_chat_local_LlamaBridge_unload(JNIEnv *, jobject) { engine.unload(); }
-extern "C" JNIEXPORT void JNICALL Java_jp_mel_chat_local_LlamaBridge_load(JNIEnv *env, jobject, jstring path, jint context, jint threads, jobject callback, jboolean preferGpu) {
-    try { engine.load(utf8(env, path), context, threads, reporter(env, callback), preferGpu); } catch (const std::exception &e) { error(env, e); }
+extern "C" JNIEXPORT void JNICALL Java_jp_mel_chat_local_LlamaBridge_load(JNIEnv *env, jobject, jstring path, jint context, jint threads, jobject callback, jboolean preferGpu, jboolean preferNpu, jstring kernels) {
+    try { engine.load(utf8(env, path), context, threads, reporter(env, callback), preferGpu, preferNpu, utf8(env, kernels)); } catch (const std::exception &e) { error(env, e); }
 }
 extern "C" JNIEXPORT jstring JNICALL Java_jp_mel_chat_local_LlamaBridge_backendInfo(JNIEnv *env, jobject) { return string(env, engine.backendInfo()); }
+extern "C" JNIEXPORT jboolean JNICALL Java_jp_mel_chat_local_LlamaBridge_npuIncluded(JNIEnv *, jobject) { return mel::Engine::npuIncluded(); }
 extern "C" JNIEXPORT jint JNICALL Java_jp_mel_chat_local_LlamaBridge_count(JNIEnv *env, jobject, jobjectArray roles, jobjectArray contents) {
     try { return engine.count(turns(env, roles, contents)); } catch (const std::exception &e) { error(env, e); return 0; }
 }

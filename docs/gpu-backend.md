@@ -35,6 +35,7 @@ Two local changes to the vendored Vulkan backend must be retained on upgrades:
   keeps the APK linkable on minSdk 26 and permits CPU fallback with an older
   Vulkan loader, rather than requiring Android 9 just to load the app.
 
-NPU support is not included. Physical Galaxy validation, latency and thermal
+Normal GPU builds do not include NPU support. A separate experimental SDK
+workflow is described in [npu.md](npu.md). Physical Galaxy validation, latency and thermal
 measurements remain outstanding. This release does not satisfy the separate
 RP-quality goal recorded in `quality-baseline.md`.

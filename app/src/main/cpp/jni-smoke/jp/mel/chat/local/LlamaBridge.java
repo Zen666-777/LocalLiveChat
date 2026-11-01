@@ -7,17 +7,18 @@ public final class LlamaBridge {
     native void begin();
     native void cancel();
     native void unload();
-    native void load(String path, int context, int threads, Progress progress, boolean preferGpu);
+    native void load(String path, int context, int threads, Progress progress, boolean preferGpu, boolean preferNpu, String kernels);
     native String backendInfo();
+    native boolean npuIncluded();
     native int count(String[] roles, String[] contents);
     native String generate(String[] roles, String[] contents, float temperature, int limit, Progress progress);
     public static void main(String[] args) {
         LlamaBridge bridge = new LlamaBridge();
         bridge.begin();
         int[] loadUpdates = {0};
-        bridge.load(args[0], 4096, 2, (stage, current, total, text) -> loadUpdates[0]++, true);
+        bridge.load(args[0], 4096, 2, (stage, current, total, text) -> loadUpdates[0]++, true, true, "");
         if (loadUpdates[0] == 0) throw new AssertionError("missing load progress");
-        if (!bridge.backendInfo().equals("cpu\nunavailable")) throw new AssertionError("CPU fallback without a GPU backend");
+        if (bridge.npuIncluded() || !bridge.backendInfo().equals("cpu\nunavailable\nnpu_not_built")) throw new AssertionError("CPU fallback without GPU/NPU backends");
         String[] roles = {"system", "assistant", "user"};
         String[] contents = {"あなたはメル。日本語で短く自然に話してください。", "おかえり。今日はどうだった？", "やっほー。🐾"};
         if (bridge.count(roles, contents) <= 0) throw new AssertionError("JNI tokenization");
@@ -50,7 +51,7 @@ public final class LlamaBridge {
         if (bridge.generate(roles, contents, 0, 8, (s, c, t, text) -> {}).isBlank())
             throw new AssertionError("JNI retry failed");
         bridge.unload();
-        bridge.load(args[0], 4096, 2, (s, c, t, text) -> {}, false);
+        bridge.load(args[0], 4096, 2, (s, c, t, text) -> {}, false, false, "");
         if (!bridge.backendInfo().equals("cpu\nselected")) throw new AssertionError("explicit CPU mode");
         bridge.unload();
         System.out.println("JNI loading, progress, UTF-8, cancellation, callback failure and retry passed.");

@@ -151,7 +151,10 @@ struct ggml_backend_registry {
         register_backend(ggml_backend_zendnn_reg());
 #endif
 #ifdef GGML_USE_HEXAGON
-        register_backend(ggml_backend_hexagon_reg());
+        // MEL opts into experimental NPU probing only after an explicit choice.
+        if (getenv("GGML_DISABLE_HEXAGON") == nullptr) {
+            register_backend(ggml_backend_hexagon_reg());
+        }
 #endif
 #ifdef GGML_USE_CANN
         register_backend(ggml_backend_cann_reg());

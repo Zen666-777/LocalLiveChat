@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: ['codex/mel-chat-mvp']
-    paths: ['.github/workflows/npu.yml', 'scripts/build-npu.sh']
+    paths: ['.github/workflows/npu.yml', 'scripts/build-npu.sh', 'scripts/package-npu.py', 'app/**', 'gradle/**', '*.gradle.kts']
 
 permissions:
   contents: read
@@ -12,7 +12,7 @@ permissions:
 jobs:
   hexagon-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -24,8 +24,9 @@ jobs:
           cmdline-tools-version: '13114758'
           packages: 'platform-tools'
           log-accepted-android-sdk-licenses: false
-      - name: Install Android NDK
-        run: sdkmanager 'ndk;27.2.12479018'
+      - name: Install Android build tools
+        run: sdkmanager 'ndk;27.2.12479018' 'platforms;android-36' 'build-tools;35.0.0' 'cmake;3.22.1'
+      - uses: gradle/actions/setup-gradle@v4
       - name: Download and verify the Hexagon build SDK
         run: |
           curl --fail --location --retry 3 --output "$RUNNER_TEMP/hexagon.tar.xz" 'https://github.com/snapdragon-toolchain/hexagon-sdk/releases/download/v6.7.0.0/hexagon-sdk-v6.7.0.0-amd64-lnx.tar.xz'
@@ -34,11 +35,63 @@ jobs:
           tar -xJf "$RUNNER_TEMP/hexagon.tar.xz" -C "$RUNNER_TEMP/hexagon-sdk"
           echo "HEXAGON_SDK_ROOT=$RUNNER_TEMP/hexagon-sdk/6.7.0.0" >> "$GITHUB_ENV"
           find "$RUNNER_TEMP/hexagon-sdk/6.7.0.0" -maxdepth 3 -type f -iname '*license*' -print
-      - name: Compile the NPU kernels and Android host backend
+      - name: Compile the NPU kernels for APK assets
+        env:
+          MEL_NPU_KERNELS_ONLY: '1'
         run: bash scripts/build-npu.sh
+      - name: Package verified DSP assets
+        run: python3 scripts/package-npu.py /tmp/mel-hexagon-verification
+      - name: Verify compiled NPU driver rejection and model-format checks on the host
+        run: |
+          mel_tools_relative=$(python3 -c 'import json,os; print(json.load(open(os.path.join(os.environ["HEXAGON_SDK_ROOT"],"hexagon_sdk.json")))["root"]["tools"]["info"][0]["path"])')
+          cmake -S app/src/main/cpp -B /tmp/mel-hexagon-host -G Ninja -DMEL_HEXAGON=ON -DMEL_VULKAN=OFF -DPREBUILT_LIB_DIR=linux_x86_64 -DHEXAGON_SDK_ROOT="$HEXAGON_SDK_ROOT" -DHEXAGON_TOOLS_ROOT="$HEXAGON_SDK_ROOT/$mel_tools_relative"
+          cmake --build /tmp/mel-hexagon-host --target mel-npu-driver-smoke mel-npu-format-smoke -j 2
+          /tmp/mel-hexagon-host/mel-npu-driver-smoke
+          /tmp/mel-hexagon-host/mel-npu-format-smoke /tmp/mel-npu-format-test.gguf
+      - name: Restore the fixed personal signing key
+        env:
+          MEL_DEBUG_KEYSTORE_BASE64: ${{ secrets.MEL_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$MEL_DEBUG_KEYSTORE_BASE64"
+          umask 077
+          mel_key="$RUNNER_TEMP/mel-npu-debug.keystore"
+          printf '%s' "$MEL_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$mel_key"
+          mel_actual=$(keytool -exportcert -keystore "$mel_key" -storepass android -alias androiddebugkey | sha256sum | cut -d ' ' -f 1)
+          test "$mel_actual" = "$(tr -d '[:space:]' < config/signing-certificate.sha256)"
+          echo "MEL_SIGNING_KEYSTORE_FILE=$mel_key" >> "$GITHUB_ENV"
+      - name: Test, lint and build the experimental NPU APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
+      - name: Verify APK signature and NPU packaging
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk > "$RUNNER_TEMP/npu-certificate.txt"
+          mel_actual=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/npu-certificate.txt" | tr '[:upper:]' '[:lower:]')
+          test "$mel_actual" = "$(tr -d '[:space:]' < config/signing-certificate.sha256)"
+          python3 -c 'import zipfile,json,hashlib; z=zipfile.ZipFile("app/build/outputs/apk/debug/app-debug.apk"); m=json.loads(z.read("assets/npu/manifest.json")); assert len(m)==4; assert all(hashlib.sha256(z.read("assets/npu/"+i["name"])).hexdigest()==i["sha256"] for i in m); assert "lib/arm64-v8a/libmel_llm.so" in z.namelist(); print("Verified fixed signature and packaged NPU asset hashes.")'
+          mel_native=$(find app/build/intermediates/cxx -name libmel_llm.so -print -quit)
+          test -n "$mel_native"
+          "$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" --dyn-symbols "$mel_native" > "$RUNNER_TEMP/npu-symbols.txt"
+          grep -q 'ggml_backend_hexagon_reg' "$RUNNER_TEMP/npu-symbols.txt"
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/MEL-Chat-NPU-TEST.apk
+          cd dist
+          sha256sum MEL-Chat-NPU-TEST.apk > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MEL-Chat-NPU-TEST-APK
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
           name: MEL-Hexagon-build-verification
           path: /tmp/mel-hexagon-verification/
           if-no-files-found: error
           retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: MEL-NPU-test-reports
+          path: app/build/reports/
+          if-no-files-found: ignore

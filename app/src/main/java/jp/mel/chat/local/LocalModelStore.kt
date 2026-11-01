@@ -33,6 +33,7 @@ class LocalModelStore(private val context: Context) {
         const val SIZE = 2497281120L
         const val SHA = "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"
         const val URL = "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/18727206c51467496bfba014368bd0a30e97f411/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+        const val NPU_URL = "https://huggingface.co/bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF/resolve/ae44f08e1392f39c0e474af10c3ff8355c8b6688/Qwen_Qwen3-4B-Instruct-2507-Q4_0.gguf"
         private const val MAX_SIZE = 6L * 1024 * 1024 * 1024
     }
     private val prefs = context.getSharedPreferences("mel_models", Context.MODE_PRIVATE)

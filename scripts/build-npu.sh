@@ -12,11 +12,15 @@ cmake -S app/src/main/cpp -B "$mel_build" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$ANDROID_HOME/ndk/27.2.12479018/build/cmake/android.toolchain.cmake" \
   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26 \
   -DANDROID_STL=c++_shared -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
-  -DMEL_VULKAN=OFF -DGGML_HEXAGON=ON \
-  -DPREBUILT_LIB_DIR=android_Release_aarch64 \
+  -DMEL_VULKAN=OFF -DMEL_HEXAGON=ON \
+  -DPREBUILT_LIB_DIR=android_aarch64 \
   -DHEXAGON_SDK_ROOT="$HEXAGON_SDK_ROOT" -DHEXAGON_TOOLS_ROOT="$HEXAGON_TOOLS_ROOT"
-cmake --build "$mel_build" --target mel_llm htp-v73 htp-v75 htp-v79 htp-v81 -j 2
+if [ "${MEL_NPU_KERNELS_ONLY:-0}" = 1 ]; then
+  cmake --build "$mel_build" --target htp-v73 htp-v75 htp-v79 htp-v81 -j 2
+else
+  cmake --build "$mel_build" --target mel_llm htp-v73 htp-v75 htp-v79 htp-v81 -j 2
+fi
 find "$mel_build" -type f -name 'libggml-htp-v*.so' -exec cp {} "$mel_output/" \;
-cp "$mel_build/libmel_llm.so" "$mel_output/"
+if [ -f "$mel_build/libmel_llm.so" ]; then cp "$mel_build/libmel_llm.so" "$mel_output/"; fi
 find "$HEXAGON_SDK_ROOT" -maxdepth 3 -type f -iname '*license*' -exec cp --parents {} "$mel_output/" \;
 printf 'Build verification only. No physical NPU inference has been run.\n' > "$mel_output/README.txt"

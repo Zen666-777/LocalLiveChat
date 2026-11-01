@@ -4,8 +4,12 @@
 #include <mutex>
 #include <stdexcept>
 #include <cstdlib>
+#include "gguf.h"
 #ifdef MEL_VULKAN
 #include "ggml-vulkan.h"
+#endif
+#ifdef MEL_HEXAGON
+#include "ggml-hexagon.h"
 #endif
 
 namespace mel {
@@ -13,6 +17,30 @@ namespace {
 std::once_flag initialized;
 void silentLog(ggml_log_level, const char *, void *) {} // Never put prompts/model metadata in logcat.
 void require(bool condition, const char *message) { if (!condition) throw std::runtime_error(message); }
+}
+bool npuFormatSupported(const std::string &path) {
+    // The vendored Hexagon kernels do not support the K-quants in the current
+    // recommended Q4_K_M. Do not report NPU use for a CPU-dominated graph.
+    std::unique_ptr<gguf_context, decltype(&gguf_free)> header(
+        gguf_init_from_file(path.c_str(), {true, nullptr}), gguf_free);
+    if (!header) return false;
+    if (gguf_get_n_tensors(header.get()) == 0) return false;
+    for (int64_t i = 0; i < gguf_get_n_tensors(header.get()); ++i) {
+        switch (gguf_get_tensor_type(header.get(), i)) {
+            case GGML_TYPE_F32: case GGML_TYPE_F16: case GGML_TYPE_Q4_0:
+            case GGML_TYPE_Q4_1: case GGML_TYPE_Q8_0: case GGML_TYPE_IQ4_NL:
+            case GGML_TYPE_MXFP4: break;
+            default: return false;
+        }
+    }
+    return true;
+}
+bool Engine::npuIncluded() {
+#ifdef MEL_HEXAGON
+    return true;
+#else
+    return false;
+#endif
 }
 Engine::~Engine() { unload(); }
 bool Engine::abort(void *data) { return static_cast<Engine *>(data)->cancelled.load(); }
@@ -31,7 +59,8 @@ void Engine::unload() {
     if (model) { llama_model_free(model); model = nullptr; }
     backend.clear();
 }
-void Engine::load(const std::string &path, int contextSize, int threads, const Progress &report, bool preferGpu) {
+void Engine::load(const std::string &path, int contextSize, int threads, const Progress &report, bool preferGpu,
+    bool preferNpu, const std::string &kernelDirectory) {
     check();
     std::call_once(initialized, [] {
         llama_log_set(silentLog, nullptr);
@@ -39,6 +68,9 @@ void Engine::load(const std::string &path, int contextSize, int threads, const P
         // Register CPU first without probing a potentially broken GPU driver.
         // GPU registration below is explicit, and CPU-only mode never probes it.
         setenv("GGML_DISABLE_VULKAN", "1", 1);
+#endif
+#ifdef MEL_HEXAGON
+        setenv("GGML_DISABLE_HEXAGON", "1", 1);
 #endif
         llama_backend_init();
         ggml_backend_reg_count();
@@ -48,6 +80,7 @@ void Engine::load(const std::string &path, int contextSize, int threads, const P
     loadingPercent = -1;
     struct ClearProgress { Progress &value; ~ClearProgress() { value = {}; } } clearProgress{loadingProgress};
     ggml_backend_dev_t gpu = nullptr;
+    auto discoverGpu = [&] {
 #ifdef MEL_VULKAN
     if (preferGpu) {
         // Vulkan's registry function returns null when the loader/device lacks
@@ -64,6 +97,7 @@ void Engine::load(const std::string &path, int contextSize, int threads, const P
         }
     }
 #endif
+    };
     auto attempt = [&](ggml_backend_dev_t device) {
         auto params = llama_model_default_params();
         ggml_backend_dev_t devices[] = {device, nullptr};
@@ -91,8 +125,43 @@ void Engine::load(const std::string &path, int contextSize, int threads, const P
         check();
         return context != nullptr;
     };
+    std::string npuReason;
+    if (preferNpu) {
+#ifdef MEL_HEXAGON
+        if (!npuFormatSupported(path)) {
+            npuReason = "npu_model_format";
+        } else if (kernelDirectory.empty()) {
+            npuReason = "npu_kernels_missing";
+        } else {
+            // One session limits virtual-memory pressure and avoids registering
+            // null devices when a firmware rejects a session. The driver and
+            // private kernel directory are used only after this explicit choice.
+            setenv("GGML_HEXAGON_NDEV", "1", 1);
+            auto searchPath = kernelDirectory + ";/vendor/lib/rfsa/adsp;/vendor/dsp;/system/lib/rfsa/adsp;/dsp";
+            setenv("ADSP_LIBRARY_PATH", searchPath.c_str(), 1);
+            ggml_backend_reg_t reg = nullptr;
+            try { reg = ggml_backend_hexagon_reg(); } catch (const std::exception &) { /* GPU/CPU fallback below. */ }
+            auto device = reg && ggml_backend_reg_dev_count(reg) ? ggml_backend_reg_dev_get(reg, 0) : nullptr;
+            check();
+            if (device) {
+                ggml_backend_register(reg);
+                if (attempt(device)) {
+                    backend = "npu\n" + std::string(ggml_backend_dev_description(device));
+                    return;
+                }
+                unload();
+                check();
+                npuReason = "npu_initialization_failed";
+            } else npuReason = "npu_unavailable";
+        }
+#else
+        npuReason = "npu_not_built";
+#endif
+    }
+    const std::string note = npuReason.empty() ? "" : "\n" + npuReason;
+    discoverGpu();
     if (gpu && attempt(gpu)) {
-        backend = "gpu\n" + std::string(ggml_backend_dev_description(gpu));
+        backend = "gpu\n" + std::string(ggml_backend_dev_description(gpu)) + note;
         return;
     }
     unload();
@@ -101,7 +170,7 @@ void Engine::load(const std::string &path, int contextSize, int threads, const P
         unload();
         throw std::runtime_error("モデルと推論用メモリを確保できません。対応GGUFと空きメモリを確認してください。");
     }
-    backend = preferGpu ? (gpu ? "cpu\ninitialization_failed" : "cpu\nunavailable") : "cpu\nselected";
+    backend = (preferGpu ? (gpu ? "cpu\ninitialization_failed" : "cpu\nunavailable") : "cpu\nselected") + note;
 }
 std::vector<llama_token> Engine::tokenize(const std::vector<Turn> &turns) {
     check();

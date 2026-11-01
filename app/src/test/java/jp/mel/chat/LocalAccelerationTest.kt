@@ -71,4 +71,38 @@ class LocalAccelerationTest {
         acceleration.loaded("cpu\ninitialization_failed")
         assertEquals("cpu", acceleration.device.value.kind)
     }
+
+    @Test fun npuSelectionRequiresExplicitOptInAndSurvivesRestart() {
+        val acceleration = LocalAcceleration(context)
+        assertFalse(acceleration.preferNpu.value)
+        acceleration.selectNpu()
+        assertTrue(LocalAcceleration(context).preferNpu.value)
+        acceleration.runWithDevices { gpu, npu -> assertTrue(gpu); assertTrue(npu) }
+        acceleration.selectGpu(true)
+        assertFalse(LocalAcceleration(context).preferNpu.value)
+    }
+
+    @Test fun interruptedNpuWorkRecoversWithoutClaimingNpuUse() {
+        context.getSharedPreferences("mel_acceleration", 0).edit()
+            .putBoolean("prefer_npu", true).putBoolean("gpu_running", true).putBoolean("npu_running", true).commit()
+        val acceleration = LocalAcceleration(context)
+        acceleration.runWithDevices { gpu, npu -> assertFalse(gpu); assertFalse(npu) }
+        acceleration.loaded("cpu\nselected")
+        assertEquals("cpu", acceleration.device.value.kind)
+        acceleration.selectNpu()
+        acceleration.runWithDevices { gpu, npu -> assertTrue(gpu); assertTrue(npu) }
+    }
+
+    @Test fun distinguishesNpuAssignmentFromModelAndDriverFallback() {
+        val acceleration = LocalAcceleration(context)
+        acceleration.loaded("npu\nHexagon v81")
+        assertEquals("npu", acceleration.device.value.kind)
+        acceleration.loaded("gpu\nAdreno\nnpu_model_format")
+        assertEquals("gpu", acceleration.device.value.kind)
+        assertEquals("Adreno", acceleration.device.value.detail)
+        assertTrue(acceleration.device.value.fallback.contains("量子化"))
+        acceleration.loaded("cpu\nunavailable\nnpu_unavailable")
+        assertEquals("cpu", acceleration.device.value.kind)
+        assertTrue(acceleration.device.value.fallback.contains("ドライバー"))
+    }
 }
