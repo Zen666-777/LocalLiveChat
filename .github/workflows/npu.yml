@@ -44,7 +44,7 @@ jobs:
       - name: Verify compiled NPU driver rejection and model-format checks on the host
         run: |
           mel_tools_relative=$(python3 -c 'import json,os; print(json.load(open(os.path.join(os.environ["HEXAGON_SDK_ROOT"],"hexagon_sdk.json")))["root"]["tools"]["info"][0]["path"])')
-          cmake -S app/src/main/cpp -B /tmp/mel-hexagon-host -G Ninja -DMEL_HEXAGON=ON -DMEL_VULKAN=OFF -DPREBUILT_LIB_DIR=linux_x86_64 -DHEXAGON_SDK_ROOT="$HEXAGON_SDK_ROOT" -DHEXAGON_TOOLS_ROOT="$HEXAGON_SDK_ROOT/$mel_tools_relative"
+          cmake -S app/src/main/cpp -B /tmp/mel-hexagon-host -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DMEL_HEXAGON=ON -DMEL_VULKAN=OFF -DPREBUILT_LIB_DIR=linux_x86_64 -DHEXAGON_SDK_ROOT="$HEXAGON_SDK_ROOT" -DHEXAGON_TOOLS_ROOT="$HEXAGON_SDK_ROOT/$mel_tools_relative"
           cmake --build /tmp/mel-hexagon-host --target mel-npu-driver-smoke mel-npu-format-smoke -j 2
           /tmp/mel-hexagon-host/mel-npu-driver-smoke
           /tmp/mel-hexagon-host/mel-npu-format-smoke /tmp/mel-npu-format-test.gguf
