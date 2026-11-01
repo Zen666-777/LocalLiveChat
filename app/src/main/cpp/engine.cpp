@@ -19,21 +19,25 @@ void silentLog(ggml_log_level, const char *, void *) {} // Never put prompts/mod
 void require(bool condition, const char *message) { if (!condition) throw std::runtime_error(message); }
 }
 bool npuFormatSupported(const std::string &path) {
-    // The vendored Hexagon kernels do not support the K-quants in the current
-    // recommended Q4_K_M. Do not report NPU use for a CPU-dominated graph.
+    // The vendored Hexagon kernels do not support transformer K-quant matrices.
+    // llama.cpp keeps the input embedding on CPU; some otherwise-compatible
+    // Q4_0 files intentionally use Q6_K for token_embd.weight.
     std::unique_ptr<gguf_context, decltype(&gguf_free)> header(
         gguf_init_from_file(path.c_str(), {true, nullptr}), gguf_free);
     if (!header) return false;
     if (gguf_get_n_tensors(header.get()) == 0) return false;
+    bool matrix = false;
     for (int64_t i = 0; i < gguf_get_n_tensors(header.get()); ++i) {
+        if (std::string(gguf_get_tensor_name(header.get(), i)) == "token_embd.weight") continue;
         switch (gguf_get_tensor_type(header.get(), i)) {
             case GGML_TYPE_F32: case GGML_TYPE_F16: case GGML_TYPE_Q4_0:
             case GGML_TYPE_Q4_1: case GGML_TYPE_Q8_0: case GGML_TYPE_IQ4_NL:
             case GGML_TYPE_MXFP4: break;
             default: return false;
         }
+        if (gguf_get_tensor_ne(header.get(), i)[1] > 1) matrix = true;
     }
-    return true;
+    return matrix;
 }
 bool Engine::npuIncluded() {
 #ifdef MEL_HEXAGON

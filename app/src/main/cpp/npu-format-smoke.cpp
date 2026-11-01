@@ -14,15 +14,18 @@ int main(int argc, char **argv) {
             if (!tensors) throw std::runtime_error("test allocation failed");
             auto weight = ggml_new_tensor_2d(tensors.get(), type, 256, 32);
             ggml_set_name(weight, "test.weight");
+            auto embedding = ggml_new_tensor_2d(tensors.get(), GGML_TYPE_Q6_K, 256, 32);
+            ggml_set_name(embedding, "token_embd.weight");
             std::unique_ptr<gguf_context, decltype(&gguf_free)> file(gguf_init_empty(), gguf_free);
             gguf_add_tensor(file.get(), weight);
+            gguf_add_tensor(file.get(), embedding);
             if (!gguf_write_to_file(file.get(), path.c_str(), false)) throw std::runtime_error("test GGUF write failed");
             bool expected = type == GGML_TYPE_Q4_0 || type == GGML_TYPE_Q8_0;
             if (mel::npuFormatSupported(path) != expected) throw std::runtime_error("NPU quantization gate failed");
         }
         std::remove(path.c_str());
         if (mel::npuFormatSupported(path)) throw std::runtime_error("missing file accepted");
-        std::cout << "NPU Q4_0/Q8_0 acceptance and K-quant rejection passed (no physical NPU tested).\n";
+        std::cout << "NPU Q4_0/Q8_0 acceptance, CPU embedding exception and transformer K-quant rejection passed (no physical NPU tested).\n";
         return 0;
     } catch (const std::exception &e) {
         std::remove(path.c_str());

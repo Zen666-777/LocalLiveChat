@@ -41,7 +41,10 @@ The browser-import flow accepts custom GGUFs and displays the calculated hash;
 it does not authenticate every imported file against this particular hash.
 
 The vendored backend's matrix kernels support F32/F16, Q4_0/Q4_1/Q8_0, IQ4_NL
-and MXFP4. We inspect GGUF tensor types before probing NPU. The existing
+and MXFP4. We inspect GGUF tensor types before probing NPU. The input
+`token_embd.weight` is excluded because llama.cpp always keeps that layer on
+CPU. Inspection of the pinned trial file's bounded header found 145 F32,
+248 Q4_0, four Q4_1 tensors and one Q6_K input embedding. The existing
 recommended Q4_K_M includes unsupported K-quants and is routed to GPU/CPU,
 with a reason shown in settings. A newer upstream backend may support other
 formats; do not assume those capabilities exist in this vendored snapshot.
