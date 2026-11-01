@@ -1,0 +1,44 @@
+name: MEL Chat Hexagon NPU verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/mel-chat-mvp']
+    paths: ['.github/workflows/npu.yml', 'scripts/build-npu.sh']
+
+permissions:
+  contents: read
+
+jobs:
+  hexagon-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '13114758'
+          packages: 'platform-tools'
+          log-accepted-android-sdk-licenses: false
+      - name: Install Android NDK
+        run: sdkmanager 'ndk;27.2.12479018'
+      - name: Download and verify the Hexagon build SDK
+        run: |
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/hexagon.tar.xz" 'https://github.com/snapdragon-toolchain/hexagon-sdk/releases/download/v6.7.0.0/hexagon-sdk-v6.7.0.0-amd64-lnx.tar.xz'
+          echo '00725fc449916d7b9af2c2a3c6b54d61f3c872d5dbc1d3ca3fd2f839b1d5dc70  '"$RUNNER_TEMP/hexagon.tar.xz" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/hexagon-sdk"
+          tar -xJf "$RUNNER_TEMP/hexagon.tar.xz" -C "$RUNNER_TEMP/hexagon-sdk"
+          echo "HEXAGON_SDK_ROOT=$RUNNER_TEMP/hexagon-sdk/6.7.0.0" >> "$GITHUB_ENV"
+          find "$RUNNER_TEMP/hexagon-sdk/6.7.0.0" -maxdepth 3 -type f -iname '*license*' -print
+      - name: Compile the NPU kernels and Android host backend
+        run: bash scripts/build-npu.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MEL-Hexagon-build-verification
+          path: /tmp/mel-hexagon-verification/
+          if-no-files-found: error
+          retention-days: 14
