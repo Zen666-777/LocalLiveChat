@@ -372,6 +372,9 @@ private fun SettingsDialog(hasKey: Boolean, busy: Boolean, offline: Boolean, dev
     val uriHandler = LocalUriHandler.current
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::importModel) }
     var deleting by remember { mutableStateOf<String?>(null) }
+    val preferGpu by vm.preferGpu.collectAsStateWithLifecycle()
+    val gpuRecovery by vm.gpuRecovery.collectAsStateWithLifecycle()
+    val inferenceDevice by vm.inferenceDevice.collectAsStateWithLifecycle()
     Sheet("接続の設定", onDismiss) {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -382,6 +385,16 @@ private fun SettingsDialog(hasKey: Boolean, busy: Boolean, offline: Boolean, dev
                 Switch(offline, vm::setOffline, enabled = !busy)
             }
             if (offline) {
+                Text("端末の処理能力", color = Lavender, fontSize = 13.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = preferGpu, onClick = { vm.setPreferGpu(true) }, enabled = !busy, label = { Text("GPU優先") })
+                    FilterChip(selected = !preferGpu, onClick = { vm.setPreferGpu(false) }, enabled = !busy, label = { Text("CPUのみ") })
+                }
+                Text(inferenceDevice.label, color = Mint, fontSize = 12.sp)
+                if (gpuRecovery) {
+                    Text("前回GPUの処理中にアプリが終了したため、CPUで動かします。GPUを試し直す場合は「GPU優先」を押してください。", color = Muted, fontSize = 11.sp)
+                }
+                Text("GPU優先ではVulkan対応GPUへモデルを割り当てます。利用できない場合はCPUで動きます。速度や発熱は端末とモデルにより変わります。NPUはまだ使用しません。", color = Muted, fontSize = 11.sp)
                 Text("MEL RP · ローカルモデル", color = Lavender, fontSize = 13.sp)
                 Text("初回だけモデルを取得します。その後は機内モードでも会話・自動要約ができます。キャラの口調と物語の連続性を重視した会話設定を使います。追加学習済みの独自モデルではありません。", color = Muted, fontSize = 12.sp)
                 Text("推奨: ${LocalModelStore.NAME}\n約2.5GB · Apache 2.0\n端末での速度・発熱はモデルと空きメモリで変わります。", color = Muted, fontSize = 12.sp)
@@ -425,7 +438,7 @@ private fun SettingsDialog(hasKey: Boolean, busy: Boolean, offline: Boolean, dev
                     }
                 }
                 TextButton(vm::releaseModel, enabled = !busy && deviceModels.active != null) { Text("モデルのメモリを解放") }
-                Text("文脈は4096トークン、返信は最大256トークン。返信は生成できた文字から表示します。設定や長い投稿が上限を超えた場合は履歴を残して停止します。アプリを閉じると生成が中断することがあります。", color = Muted, fontSize = 11.sp)
+                Text("文脈は4096トークン、標準返信は256トークン。プロット編集で返信上限を変更できます。返信は生成できた文字から表示します。設定や長い投稿が上限を超えた場合は履歴を残して停止します。アプリを閉じると生成が中断することがあります。", color = Muted, fontSize = 11.sp)
             } else {
             Text("OpenRouter API", color = Lavender, fontSize = 13.sp)
             Text("${if (hasKey) "✓ キーは保存済みです。変更する場合のみ入力してください。" else "OpenRouterで取得したAPIキーを登録してください。"}\nキーはAndroid Keystoreで暗号化し、この端末に保存します。", color = Muted, fontSize = 12.sp)

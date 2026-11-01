@@ -15,16 +15,19 @@ internal object LlamaBridge {
     init { System.loadLibrary("mel_llm") }
     external fun begin()
     external fun cancel()
-    external fun load(path: String, context: Int, threads: Int, progress: NativeProgress)
+    external fun load(path: String, context: Int, threads: Int, progress: NativeProgress, preferGpu: Boolean)
+    external fun backendInfo(): String
     external fun unload()
     external fun count(roles: Array<String>, contents: Array<String>): Int
     external fun generate(roles: Array<String>, contents: Array<String>, temperature: Float, limit: Int, progress: NativeProgress): String
 }
 
-class LocalChatService(private val context: Context, private val store: LocalModelStore) : ChatService {
+class LocalChatService(private val context: Context, private val store: LocalModelStore,
+    private val acceleration: LocalAcceleration) : ChatService {
     private val runner = NativeTaskRunner({ LlamaBridge.begin() }, { LlamaBridge.cancel() })
     val progress = MutableStateFlow(LocalProgress())
     private var loaded: String? = null
+    private var loadedGpu = false
     private val progressLock = Any()
     private var progressGeneration = 0L
     override val local = true
@@ -39,14 +42,19 @@ class LocalChatService(private val context: Context, private val store: LocalMod
     }
     private suspend fun <T> native(action: (Long) -> T): T {
         val operation = synchronized(progressLock) { ++progressGeneration }
-        return try { runner.run { action(operation) } }
+        return try { runner.run { acceleration.run { gpu ->
+            requestedGpu = gpu
+            action(operation)
+        } } }
         finally { synchronized(progressLock) { if (progressGeneration == operation) progressGeneration++ } }
     }
+    // Accessed only by the single inference worker.
+    private var requestedGpu = false
     private fun ensureLoaded(operation: Long) {
         val model = store.active() ?: error("設定からローカルモデルを取得・選択してください。")
         val file = store.file(model)
         check(file.isFile && file.length() == model.bytes) { "モデルが見つからないか破損しています。再取得してください。" }
-        if (loaded == model.sha256) return
+        if (loaded == model.sha256 && loadedGpu == requestedGpu) return
         LlamaBridge.unload()
         loaded = null
         publish(operation, LocalProgress("空きメモリを確認中"))
@@ -57,7 +65,9 @@ class LocalChatService(private val context: Context, private val store: LocalMod
         }
         publish(operation, LocalProgress("モデルを読み込み中"))
         LlamaBridge.load(file.absolutePath, contextLimit, Runtime.getRuntime().availableProcessors().coerceIn(1, 4),
-            NativeProgress { _, current, total, _ -> publish(operation, LocalProgress("モデルを読み込み中", current, total)) })
+            NativeProgress { _, current, total, _ -> publish(operation, LocalProgress("モデルを読み込み中", current, total)) }, requestedGpu)
+        acceleration.loaded(LlamaBridge.backendInfo())
+        loadedGpu = requestedGpu
         loaded = model.sha256
     }
 
@@ -77,7 +87,10 @@ class LocalChatService(private val context: Context, private val store: LocalMod
                     current, total, if (summary) "" else text))
             }).trim().also { check(it.isNotBlank()) { "モデルの応答が空でした。再試行するか、別のモデルを選んでください。" } }
     }
-    suspend fun release() = native { operation -> LlamaBridge.unload(); loaded = null; publish(operation, LocalProgress()) }
+    suspend fun release() = native { operation ->
+        LlamaBridge.unload(); loaded = null; acceleration.device.value = InferenceDevice()
+        publish(operation, LocalProgress())
+    }
 }
 
 /** Models such as Gemma accept one leading system block rather than successive system turns. */

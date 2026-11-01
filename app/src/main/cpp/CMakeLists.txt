@@ -12,10 +12,24 @@ foreach(option LLAMA_BUILD_COMMON LLAMA_BUILD_TESTS LLAMA_BUILD_EXAMPLES LLAMA_B
 endforeach()
 # Optimized inference is needed even in an installable debug APK.
 set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+option(MEL_VULKAN "Build the optional Android GPU inference backend" ${ANDROID})
+if(MEL_VULKAN)
+    include(cmake/VulkanDependencies.cmake)
+    set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+endif()
 add_subdirectory(vendor/llama.cpp build-llama EXCLUDE_FROM_ALL)
+if(MEL_VULKAN)
+    target_include_directories(ggml-vulkan BEFORE PRIVATE
+        "${mel_vulkan_hpp_SOURCE_DIR}"
+        "${mel_vulkan_headers_SOURCE_DIR}/include"
+        "${mel_spirv_headers_SOURCE_DIR}/include")
+endif()
 add_library(mel_engine STATIC engine.cpp)
 target_include_directories(mel_engine PUBLIC vendor/llama.cpp/include vendor/llama.cpp/ggml/include)
 target_link_libraries(mel_engine PUBLIC llama)
+if(MEL_VULKAN)
+    target_compile_definitions(mel_engine PRIVATE MEL_VULKAN=1)
+endif()
 if(ANDROID)
     add_library(mel_llm SHARED bridge.cpp)
     target_link_libraries(mel_llm mel_engine android log)

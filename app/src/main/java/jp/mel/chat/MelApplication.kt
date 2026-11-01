@@ -14,7 +14,8 @@ class MelApplication : Application() {
     val keys by lazy { SecureApiKeyStore(this) }
     val backend by lazy { BackendSettings(this) }
     val deviceModels by lazy { LocalModelStore(this) }
-    val device by lazy { LocalChatService(this, deviceModels) }
+    val acceleration by lazy { LocalAcceleration(this) }
+    val device by lazy { LocalChatService(this, deviceModels, acceleration) }
     val service by lazy { RoutedChatService({ backend.offline.value }, device, api) }
     val repository by lazy { ChatRepository(database, service) }
 }

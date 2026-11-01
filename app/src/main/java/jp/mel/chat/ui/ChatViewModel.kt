@@ -44,6 +44,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val replies = ReplyTracker(preferences)
     val replyState = replies.state
     val localProgress = app.device.progress
+    val preferGpu = app.acceleration.preferGpu
+    val gpuRecovery = app.acceleration.recovery
+    val inferenceDevice = app.acceleration.device
+    fun setPreferGpu(value: Boolean) = perform {
+        // Unload on the inference worker before changing the persistent policy.
+        app.device.release()
+        app.acceleration.selectGpu(value)
+    }
     private var work: Job? = null
     private val operations = Mutex()
 

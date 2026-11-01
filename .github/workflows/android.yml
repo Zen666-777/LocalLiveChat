@@ -12,6 +12,31 @@ permissions:
   contents: read
 
 jobs:
+  gpu-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the Vulkan software test driver and shader compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libvulkan-dev mesa-vulkan-drivers glslc ninja-build
+      - name: Compile the actual Vulkan inference backend
+        run: |
+          cmake -S app/src/main/cpp -B /tmp/mel-vulkan -G Ninja -DMEL_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/mel-vulkan --target mel-smoke -j 2
+      - name: Run GPU inference, cancellation and CPU switching with a small fixture
+        env:
+          # Force Mesa's software Vulkan device on this GPU-less runner. This
+          # validates the GPU code path, not Snapdragon performance/compatibility.
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          GGML_VK_VISIBLE_DEVICES: '0'
+        run: |
+          curl --fail --location --retry 3 --output /tmp/mel-gpu-fixture.gguf 'https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/60b85c0e3d8fe0f6474f406922a26d12aca4550d/Qwen_Qwen3-0.6B-Q4_K_M.gguf'
+          echo '9acfc1e001311f34b4252001b626f2e466d592a42065f66571bff3790d4e1b14  /tmp/mel-gpu-fixture.gguf' | sha256sum --check
+          /tmp/mel-vulkan/mel-smoke /tmp/mel-gpu-fixture.gguf --gpu
+          GGML_VK_VISIBLE_DEVICES='' /tmp/mel-vulkan/mel-smoke /tmp/mel-gpu-fixture.gguf --fallback
+
   native-smoke:
     needs: build
     runs-on: ubuntu-latest

@@ -178,6 +178,7 @@ if (Vulkan_FOUND)
         vulkan-shaders-gen
         SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vulkan-shaders
         CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/$<CONFIG>
+                   -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
                    -DCMAKE_INSTALL_BINDIR=.
                    -DCMAKE_BUILD_TYPE=$<CONFIG>
                    ${VULKAN_SHADER_GEN_CMAKE_ARGS}

@@ -3,6 +3,10 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <cstdlib>
+#ifdef MEL_VULKAN
+#include "ggml-vulkan.h"
+#endif
 
 namespace mel {
 namespace {
@@ -25,35 +29,79 @@ void Engine::check() { require(!cancelled.load(), "処理を停止しました�
 void Engine::unload() {
     if (context) { llama_free(context); context = nullptr; }
     if (model) { llama_model_free(model); model = nullptr; }
+    backend.clear();
 }
-void Engine::load(const std::string &path, int contextSize, int threads, const Progress &report) {
+void Engine::load(const std::string &path, int contextSize, int threads, const Progress &report, bool preferGpu) {
     check();
-    std::call_once(initialized, [] { llama_log_set(silentLog, nullptr); llama_backend_init(); });
+    std::call_once(initialized, [] {
+        llama_log_set(silentLog, nullptr);
+#ifdef MEL_VULKAN
+        // Register CPU first without probing a potentially broken GPU driver.
+        // GPU registration below is explicit, and CPU-only mode never probes it.
+        setenv("GGML_DISABLE_VULKAN", "1", 1);
+#endif
+        llama_backend_init();
+        ggml_backend_reg_count();
+    });
     unload();
     loadingProgress = report;
     loadingPercent = -1;
     struct ClearProgress { Progress &value; ~ClearProgress() { value = {}; } } clearProgress{loadingProgress};
-    auto params = llama_model_default_params();
-    params.n_gpu_layers = 0;
-    params.load_mode = LLAMA_LOAD_MODE_MMAP;
-    params.progress_callback = progress;
-    params.progress_callback_user_data = this;
-    model = llama_model_load_from_file(path.c_str(), params);
+    ggml_backend_dev_t gpu = nullptr;
+#ifdef MEL_VULKAN
+    if (preferGpu) {
+        // Vulkan's registry function returns null when the loader/device lacks
+        // the required features. A failed probe must still leave CPU usable.
+        if (auto reg = ggml_backend_vk_reg()) ggml_backend_register(reg);
+        for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+            auto device = ggml_backend_dev_get(i);
+            auto type = ggml_backend_dev_type(device);
+            if ((type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU) &&
+                std::string(ggml_backend_reg_name(ggml_backend_dev_backend_reg(device))) == "Vulkan") {
+                gpu = device;
+                break;
+            }
+        }
+    }
+#endif
+    auto attempt = [&](ggml_backend_dev_t device) {
+        auto params = llama_model_default_params();
+        ggml_backend_dev_t devices[] = {device, nullptr};
+        // An explicit empty device list also prevents incidental GPU context
+        // creation after a user switches back to CPU-only mode.
+        params.devices = devices;
+        params.n_gpu_layers = device ? -1 : 0;
+        params.load_mode = LLAMA_LOAD_MODE_MMAP;
+        params.progress_callback = progress;
+        params.progress_callback_user_data = this;
+        model = llama_model_load_from_file(path.c_str(), params);
+        check();
+        if (!model) return false;
+        auto ctx = llama_context_default_params();
+        ctx.n_ctx = std::min<int>(contextSize, llama_model_n_ctx_train(model));
+        if (ctx.n_ctx < static_cast<uint32_t>(contextSize)) { unload(); throw std::runtime_error("4096トークン以上に対応するモデルを選んでください。"); }
+        ctx.n_batch = 256;
+        ctx.n_ubatch = 128;
+        ctx.n_threads = std::clamp(threads, 1, 6);
+        ctx.n_threads_batch = ctx.n_threads;
+        ctx.no_perf = true;
+        ctx.abort_callback = abort;
+        ctx.abort_callback_data = this;
+        context = llama_init_from_model(model, ctx);
+        check();
+        return context != nullptr;
+    };
+    if (gpu && attempt(gpu)) {
+        backend = "gpu\n" + std::string(ggml_backend_dev_description(gpu));
+        return;
+    }
+    unload();
     check();
-    require(model, "モデルを開けません。対応するテキスト用GGUFか、空きメモリを確認してください。");
-    auto ctx = llama_context_default_params();
-    ctx.n_ctx = std::min<int>(contextSize, llama_model_n_ctx_train(model));
-    if (ctx.n_ctx < static_cast<uint32_t>(contextSize)) { unload(); throw std::runtime_error("4096トークン以上に対応するモデルを選んでください。"); }
-    ctx.n_batch = 256;
-    ctx.n_ubatch = 128;
-    ctx.n_threads = std::clamp(threads, 1, 6);
-    ctx.n_threads_batch = ctx.n_threads;
-    ctx.no_perf = true;
-    ctx.abort_callback = abort;
-    ctx.abort_callback_data = this;
-    context = llama_init_from_model(model, ctx);
-    if (!context) { unload(); throw std::runtime_error("推論用メモリを確保できません。他のアプリを閉じてください。"); }
-    check();
+    if (!attempt(nullptr)) {
+        unload();
+        throw std::runtime_error("モデルと推論用メモリを確保できません。対応GGUFと空きメモリを確認してください。");
+    }
+    backend = preferGpu ? (gpu ? "cpu\ninitialization_failed" : "cpu\nunavailable") : "cpu\nselected";
 }
 std::vector<llama_token> Engine::tokenize(const std::vector<Turn> &turns) {
     check();

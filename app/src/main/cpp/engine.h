@@ -15,7 +15,8 @@ public:
     ~Engine();
     void begin() { cancelled.store(false); }
     void cancel() { cancelled.store(true); }
-    void load(const std::string &path, int contextSize, int threads, const Progress &report = {});
+    void load(const std::string &path, int contextSize, int threads, const Progress &report = {}, bool preferGpu = false);
+    std::string backendInfo() const { return backend; }
     void unload();
     int count(const std::vector<Turn> &turns);
     std::string generate(const std::vector<Turn> &turns, float temperature, int maxTokens, const Progress &report = {}, uint32_t seed = LLAMA_DEFAULT_SEED);
@@ -25,6 +26,7 @@ private:
     llama_context *context = nullptr;
     Progress loadingProgress;
     int loadingPercent = -1;
+    std::string backend;
     void check();
     std::vector<llama_token> tokenize(const std::vector<Turn> &turns);
     static bool abort(void *data);

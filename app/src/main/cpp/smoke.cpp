@@ -3,13 +3,18 @@
 #include <stdexcept>
 
 int main(int argc, char **argv) {
-    if (argc != 2) return 2;
+    if (argc != 2 && argc != 3) return 2;
+    const bool gpu = argc == 3 && std::string(argv[2]) == "--gpu";
+    const bool fallback = argc == 3 && std::string(argv[2]) == "--fallback";
     try {
         if (mel::completeUtf8("a\xe3\x81") != "a" || mel::completeUtf8("a\xf0\x9f\x98") != "a" ||
             mel::completeUtf8("こんにちは🙂") != "こんにちは🙂") throw std::runtime_error("partial UTF-8");
         mel::Engine engine;
         engine.begin();
-        engine.load(argv[1], 4096, 2);
+        engine.load(argv[1], 4096, 2, {}, gpu || fallback);
+        if (gpu && engine.backendInfo().find("gpu\n") != 0) throw std::runtime_error("GPU test unexpectedly fell back to CPU");
+        if (fallback && engine.backendInfo() != "cpu\nunavailable") throw std::runtime_error("missing GPU did not use CPU");
+        std::cout << "Selected backend: " << engine.backendInfo() << "\n";
         std::vector<mel::Turn> turns = {
             {"system", "あなたはメル。親しみやすい日本語の会話相手です。短く自然に返事してください。"},
             {"user", "ただいま。今日は少し疲れたよ。"},
@@ -39,6 +44,12 @@ int main(int argc, char **argv) {
         engine.begin();
         if (engine.generate(turns, 0.0f, 8).empty()) throw std::runtime_error("retry failed");
         engine.unload();
+        if (gpu) {
+            engine.load(argv[1], 4096, 2, {}, false);
+            if (engine.backendInfo() != "cpu\nselected") throw std::runtime_error("CPU mode after GPU use");
+            if (engine.generate(turns, 0.0f, 8).empty()) throw std::runtime_error("CPU after GPU generation failed");
+            engine.unload();
+        }
         std::cout << "Native inference, memory, overflow, cancellation and retry passed.\n";
         return 0;
     } catch (const std::exception &e) { std::cerr << e.what() << "\n"; return 1; }

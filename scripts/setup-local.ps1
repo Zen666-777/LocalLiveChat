@@ -30,4 +30,5 @@ $env:GRADLE_USER_HOME = Join-Path $taskTools 'gradle-home'
 1..100 | ForEach-Object { 'y' } | & (Join-Path $env:ANDROID_HOME 'cmdline-tools/latest/bin/sdkmanager.bat') --licenses | Out-Null
 & (Join-Path $env:ANDROID_HOME 'cmdline-tools/latest/bin/sdkmanager.bat') 'platforms;android-36' 'build-tools;35.0.0' 'platform-tools' 'ndk;27.2.12479018' 'cmake;3.22.1'
 if ($LASTEXITCODE -ne 0) { throw 'SDK installation failed' }
+& (Join-Path $PSScriptRoot 'setup-gpu-tools.ps1')
 Write-Output 'JDK and Android SDK ready in .tools'

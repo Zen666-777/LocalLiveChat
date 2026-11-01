@@ -23,6 +23,14 @@ New-Item -ItemType Directory -Force $taskSdkStage | Out-Null
 & robocopy $env:ANDROID_HOME $taskSdkStage /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1
 if ($LASTEXITCODE -ge 8) { throw 'Could not stage Android SDK' }
 $env:ANDROID_HOME = $taskSdkStage
+$taskGpuCompiler = Join-Path $taskTools 'gpu-deps/llvm-mingw-20251007-ucrt-x86_64'
+if (!(Test-Path (Join-Path $taskGpuCompiler 'bin/clang++.exe'))) {
+    & (Join-Path $PSScriptRoot 'setup-gpu-tools.ps1')
+}
+$taskGpuCompilerStage = Join-Path $taskStage 'gpu-host'
+& robocopy $taskGpuCompiler $taskGpuCompilerStage /E /XJ /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
+if ($LASTEXITCODE -ge 8) { throw 'Could not stage the GPU shader host compiler' }
+$env:PATH = (Join-Path $taskGpuCompilerStage 'bin') + [IO.Path]::PathSeparator + $env:PATH
 $taskSourceStage = Join-Path $taskStage 'source'
 New-Item -ItemType Directory -Force $taskSourceStage | Out-Null
 foreach ($taskDirectory in @('app/src', 'app/schemas', 'gradle', 'config')) {
